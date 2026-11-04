@@ -124,6 +124,8 @@ button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px soli
 .topic-tree a:hover { color: var(--sl-color-accent-high); background: var(--sl-color-gray-6); }
 .topic-tree [aria-current='page'] { color: var(--sl-color-accent-high); background: var(--sl-color-accent-low); box-shadow: inset 3px 0 var(--sl-color-accent); font-weight: 650; }
 .note-outline { display: flex; flex-direction: column; min-width: 0; overflow: hidden; border: 1px solid var(--sl-color-hairline); border-radius: 8px; background: var(--sl-color-bg); font: .8rem/1.55 var(--sl-font); }
+/* Keep directory layout and paint work independent of the long reading area. */
+.note-outline { contain: layout paint; }
 .outline-bulk-actions { display: flex; flex: 0 0 auto; gap: .4rem; padding: .45rem .65rem; border-bottom: 1px solid var(--sl-color-hairline); }
 .outline-bulk-actions button { flex: 1; min-height: 1.8rem; padding: .25rem .4rem; border: 1px solid var(--sl-color-gray-5); border-radius: 5px; background: var(--sl-color-bg); color: var(--sl-color-gray-3); font: .69rem var(--sl-font); cursor: pointer; }
 .outline-bulk-actions button:hover { border-color: var(--sl-color-accent); color: var(--sl-color-accent-high); background: var(--sl-color-accent-low); }

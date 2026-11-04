@@ -25,56 +25,6 @@ function count(items: Heading[]): number { return items.reduce((sum, item) => su
 </aside>
 
 <script>
-  const links = [...document.querySelectorAll<HTMLAnchorElement>('.outline-links a')];
-  const targetFor = (link: HTMLAnchorElement) => {
-    const id = link.getAttribute('href')?.slice(1) ?? '';
-    let decoded = id;
-    try { decoded = decodeURIComponent(id); } catch {}
-    return document.getElementById(id) ?? document.getElementById(decoded);
-  };
-  const headings = links.map(targetFor).filter((heading): heading is HTMLElement => Boolean(heading));
-  const revealHash = () => {
-    let id = location.hash.slice(1), decoded = id;
-    try { decoded = decodeURIComponent(id); } catch {}
-    const target = document.getElementById(id) ?? document.getElementById(decoded);
-    if (!target) return;
-    let item = links.find((link) => targetFor(link) === target)?.closest<HTMLElement>('[data-outline-item]');
-    while (item) {
-      const parent = item.parentElement?.closest<HTMLElement>('[data-outline-item]');
-      if (parent) {
-        const branch = parent.querySelector<HTMLButtonElement>(':scope > .outline-row > [data-outline-branch]');
-        const children = parent.querySelector<HTMLElement>(':scope > [data-outline-children]');
-        if (branch && children) {
-          branch.setAttribute('aria-expanded', 'true');
-          branch.setAttribute('aria-label', `收起${branch.parentElement?.querySelector('a')?.textContent ?? ''}的子目录`);
-          branch.title = '收起子目录';
-          children.hidden = false;
-        }
-      }
-      item = parent ?? undefined;
-    }
-    requestAnimationFrame(() => target.scrollIntoView({ block: 'start' }));
-  };
-  window.addEventListener('hashchange', revealHash);
-  let scheduled = false;
-  const updateCurrent = () => {
-    scheduled = false;
-    const offset = document.querySelector('.header')?.getBoundingClientRect().bottom ?? 64;
-    let current = headings[0];
-    for (const heading of headings) {
-      const index = headings.indexOf(heading);
-      if (links[index]?.closest('[hidden]')) continue;
-      if (heading.getBoundingClientRect().top > offset + 40) break;
-      current = heading;
-    }
-    links.forEach((link) => {
-      if (targetFor(link) === current) link.setAttribute('aria-current', 'location');
-      else link.removeAttribute('aria-current');
-    });
-  };
-  window.addEventListener('scroll', () => {
-    if (!scheduled) { scheduled = true; requestAnimationFrame(updateCurrent); }
-  }, { passive: true });
-  updateCurrent();
-  revealHash();
+  import { initNoteOutline } from '../lib/note-outline';
+  document.querySelectorAll<HTMLElement>('aside[data-note-outline]').forEach(initNoteOutline);
 </script>

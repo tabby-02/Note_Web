@@ -27,6 +27,7 @@ jobs:
       - uses: actions/configure-pages@v5
       - run: npm run check
       - run: npm run test:markdown
+      - run: npm run test:reading
       - run: npm run test:search
       - run: npm run test:manager
       - run: npm run build

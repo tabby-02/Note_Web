@@ -8,6 +8,7 @@
     "test:manager": "node --test scripts/note-manager/*.test.mjs",
     "test:search": "node --test scripts/note-search.test.mjs",
     "test:markdown": "node --test scripts/note-markdown.test.mjs",
+    "test:reading": "node --test scripts/note-outline.test.mjs",
     "predev": "node scripts/prepare-notes.mjs",
     "dev": "astro dev",
     "prebuild": "node scripts/prepare-notes.mjs && node scripts/validate-notes.mjs",

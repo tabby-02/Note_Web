@@ -117,6 +117,7 @@ npm run manage
 | `npm run check` | 自动先执行 `precheck` 准备笔记，再运行 `astro check` |
 | `npm run test:manager` | 验证导入、引用重写、分类移动、回收站、失败回滚及本机接口 |
 | `npm run test:search` | 验证搜索索引与正文锚点一致、嵌套内容去重、Word 文本提取 |
+| `npm run test:reading` | 验证长笔记目录定位、重新排版后的定位和滚动时 DOM 更新次数 |
 | `npm run build` | 依次运行 `prebuild`、Astro 静态构建、`postbuild`，产出并校验 `dist/` |
 | `npm run preview` | 启动构建产物预览，不重新生成笔记或重新构建 |
 
@@ -145,10 +146,10 @@ Windows 上建议先停止开发服务，并等待管理操作完成，再依次
 1. 将项目提交到 GitHub 仓库，在仓库 **Settings → Pages → Build and deployment → Source** 中选择 **GitHub Actions**。
 2. 核对 `astro.config.mjs` 的 `site`。当前站点域名为 `https://tabby-02.github.io`，Pages 基础路径为 `/Note_Web`。如果修改仓库名、使用用户主页仓库或绑定自定义域名，应同步调整 `astro.config.mjs`、`scripts/search-index.mjs` 与 `scripts/validate-site.mjs` 中的基础路径配置。
 3. 推送到仓库默认分支，或在 Actions 中手动触发 **Deploy study notes**。工作流仅在默认分支执行发布任务。
-4. 构建任务使用 Ubuntu 和 Node.js 24，安装锁定依赖、配置 Pages、执行类型检查及 Markdown / 搜索 / 管理工具测试，再设置 `GITHUB_PAGES=true` 执行 `npm run build`，通过 `actions/upload-pages-artifact` 上传 `dist/`。
+4. 构建任务使用 Ubuntu 和 Node.js 24，安装锁定依赖、配置 Pages、执行类型检查及 Markdown / 阅读 / 搜索 / 管理工具测试，再设置 `GITHUB_PAGES=true` 执行 `npm run build`，通过 `actions/upload-pages-artifact` 上传 `dist/`。
 5. 部署任务使用 `actions/deploy-pages` 发布产物。当前工作流已声明 `contents: read`、`pages: write`、`id-token: write` 权限，无需额外配置部署令牌。
 
-Actions 同时执行类型检查、三套回归测试、笔记校验和产物校验；全部通过后才发布。
+Actions 同时执行类型检查、四套回归测试、笔记校验和产物校验；全部通过后才发布。
 
 本地复现 Pages 路径下的构建与预览（PowerShell）：
 
@@ -209,6 +210,8 @@ git push
 顶部搜索使用 Pagefind，可切换“知识目录”“章节目录”“笔记正文”三个范围；正文范围可搜索全部笔记或仅当前笔记。同一主文件中多个命中段落会分别列出，关键词高亮，点击正文结果会跳到对应段落，章节结果跳到章节标题。结果较多时每批显示 40 条，点击“显示更多匹配”继续查看。最近 8 个搜索词只保存在当前标签页的临时会话存储中，可点击重搜或清除；输入停顿不会保存，点击输入框以外的位置、操作搜索选项、按 Enter/Tab 或关闭搜索时才保存本次完整输入，清除历史后不会重新补存当前词。正文索引包含 Markdown 和 Word 主文档，不读取辅助文件；图片集可按章节目录标题搜索。修改笔记后，通过管理工具保存或重新运行 `npm run dev` 可刷新索引；发布时自动重建。搜索回归检查：`npm run test:search`。
 
 桌面阅读页左侧依次为知识目录、本页目录，两者可分别收起并记住状态，各自独立滚动。知识目录切换笔记或刷新时保留当前标签页内的滚动位置。本页目录为可折叠树，默认展示两级，可逐支展开，或一键全部展开/收起到一级；手机上知识目录使用顶部菜单，本页目录在正文前折叠展示。
+
+长笔记的目录高亮使用二分查找，只在章节变化时修改前后两个链接；折叠目录后暂停高亮计算。图片加载、字体加载和调整目录宽度后依据实际标题位置重新定位，避免持续扫描整页或反复修改全部目录条目。
 
 两个目录的右边界可拖动调整宽度，方向键可微调，双击边界恢复默认；默认知识目录较窄，本页目录较宽，宽度会跨页面保存。辅助文件默认收在右侧，不占正文宽度；展开后按原有文件夹名称和层级浏览，第一层默认展开，更深层默认折叠。点击文件会在当前页面弹窗预览图片、PDF、文本或 DOCX，并保留下载入口。图片笔记按章节连续排列所有页面，支持章节跳转、上下页定位和图片放大。
 

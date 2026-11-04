@@ -1,0 +1,67 @@
+---
+import fs from 'node:fs';
+import path from 'node:path';
+import { FileArchive, FileImage, FileText, Paperclip, ChevronDown } from '@lucide/astro';
+import AttachmentPreview from './AttachmentPreview.astro';
+import AttachmentTree from './AttachmentTree.astro';
+
+interface Props {
+  leafPath: string;
+  exclude?: string[];
+}
+
+const { leafPath, exclude = [] }: Props = Astro.props;
+const leafRoot = path.resolve(process.cwd(), 'notes', ...leafPath.split('/'));
+const siteBase = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+const base = `${siteBase}library/${leafPath}/attachments/`;
+const excluded = new Set(exclude.map((file) => path.resolve(file)));
+function walk(dir: string, prefix = ''): Array<{ relative: string; absolute: string }> {
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const relative = path.posix.join(prefix, entry.name);
+    const absolute = path.join(dir, entry.name);
+    return entry.isDirectory() ? walk(absolute, relative) : [{ relative, absolute }];
+  });
+}
+const files = walk(path.join(leafRoot, 'attachments'))
+  .filter((file) => !excluded.has(path.resolve(file.absolute)))
+  .map((file) => {
+    const extension = path.extname(file.relative).toLowerCase();
+    const Icon = ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.avif'].includes(extension)
+      ? FileImage
+      : ['.zip', '.rar', '.7z'].includes(extension)
+        ? FileArchive
+        : FileText;
+    return { ...file, Icon, extension, href: `${base}${file.relative.split('/').map(encodeURIComponent).join('/')}` };
+  });
+interface FileNode { name: string; path: string; files: typeof files; children: FileNode[] }
+const tree: FileNode = { name: '', path: '', files: [], children: [] };
+for (const file of files) {
+  const segments = file.relative.split('/');
+  let current = tree;
+  segments.slice(0, -1).forEach((segment) => {
+    let child = current.children.find((entry) => entry.name === segment);
+    if (!child) { child = { name: segment, path: [...(current.path ? current.path.split('/') : []), segment].join('/'), files: [], children: [] }; current.children.push(child); }
+    current = child;
+  });
+  current.files.push(file);
+}
+const folders = (node: FileNode): number => node.children.length + node.children.reduce((sum, child) => sum + folders(child), 0);
+---
+
+{files.length > 0 && (
+  <div class="attachment-dock" data-attachment-dock>
+    <button class="attachment-dock-handle" type="button" data-attachment-dock-toggle data-attachment-count={files.length} aria-expanded="false" aria-controls="attachment-dock-panel" aria-label={`展开辅助文件，共${files.length}项`} title="展开辅助文件"><Paperclip size={17} aria-hidden="true" /><span>辅助文件</span><b>{files.length}</b><ChevronDown class="dock-caret" size={14} aria-hidden="true" /></button>
+    <aside class="attachment-rail" id="attachment-dock-panel" aria-label="辅助文件" inert>
+      <div class="attachment-panel-header"><span>辅助文件</span><small>{folders(tree)} 个文件夹 · {files.length} 个文件</small><button type="button" data-attachment-dock-close aria-label="向右收起辅助文件" title="向右收起"><ChevronDown class="dock-caret" size={15} aria-hidden="true" /></button></div>
+      <details open data-attachment-list>
+        <summary><Paperclip size={14} aria-hidden="true" /> 附件目录 <span>{files.length}</span><ChevronDown class="attachment-caret" size={14} aria-hidden="true" /></summary>
+        <ul class="attachment-tree"><AttachmentTree node={tree} depth={0} /></ul>
+      </details>
+    </aside>
+  </div>
+)}
+<AttachmentPreview />
+
+<style>
+</style>

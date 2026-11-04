@@ -1,0 +1,25 @@
+<script is:inline>
+  for (const directory of ['topic', 'outline']) {
+    try {
+      const saved = localStorage.getItem(`notes-${directory}-collapsed`);
+      const collapsed = saved === null ? directory === 'outline' && !matchMedia('(min-width: 50rem)').matches : saved === 'true';
+      document.documentElement.setAttribute(`data-${directory}-collapsed`, String(collapsed));
+      const width = Number(localStorage.getItem(`notes-${directory}-width`));
+      if (Number.isFinite(width) && width >= 160 && width <= 640) {
+        document.documentElement.style.setProperty(`--notes-${directory}-size`, `${width}px`);
+      }
+    } catch {}
+  }
+  window.NotesThemeProvider = (() => {
+    let theme = localStorage.getItem('starlight-theme') === 'dark' ? 'dark' : 'light';
+    document.documentElement.dataset.theme = theme;
+    return {
+      current: () => theme,
+      set(next) {
+        theme = next === 'dark' ? 'dark' : 'light';
+        document.documentElement.dataset.theme = theme;
+        localStorage.setItem('starlight-theme', theme);
+      },
+    };
+  })();
+</script>

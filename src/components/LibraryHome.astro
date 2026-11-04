@@ -1,0 +1,73 @@
+---
+import { BookOpen, BrainCircuit, CodeXml, ShieldCheck, Terminal } from '@lucide/astro';
+import { loadTaxonomy, flattenLeaves } from '../../scripts/taxonomy.mjs';
+import type { NoteType } from '../../scripts/taxonomy.mjs';
+const taxonomy = loadTaxonomy();
+const leaves = flattenLeaves(taxonomy);
+const icons = [BookOpen, BrainCircuit, ShieldCheck, CodeXml, Terminal];
+const categories = taxonomy.groups.map((group, index) => {
+  const count = flattenLeaves({ groups: [group] }).length;
+  return { ...group, count, icon: icons[index % icons.length] };
+});
+const formatCount = (type: NoteType) => leaves.filter((leaf) => leaf.type === type).length;
+const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+---
+
+<section class="library-home" aria-labelledby="library-heading">
+  <div class="library-heading-row">
+    <div>
+      <p class="eyebrow">个人知识库</p>
+      <h1 id="library-heading">学习笔记</h1>
+      <p class="library-summary">{leaves.length} 个主题条目 · {formatCount('markdown')} 篇 Markdown · {formatCount('docx')} 份 Word · {formatCount('gallery')} 个图片集</p>
+    </div>
+    {leaves.length > 0 && <a class="start-reading" href={`${base}notes/${leaves[0].slug}/`}>
+      <span>继续浏览</span>
+      <span aria-hidden="true">→</span>
+    </a>}
+  </div>
+
+  <div class="category-list">
+    {categories.map((category) => {
+      const Icon = category.icon;
+      return (
+        <a class="category-row" href={`${base}notes/${category.id}/`}>
+          <span class="category-icon"><Icon size={20} stroke-width={1.7} aria-hidden="true" /></span>
+          <span class="category-copy">
+            <span class="category-name">{category.title}</span>
+            <span class="category-count">{category.count} 个主题</span>
+          </span>
+          <span class="category-arrow" aria-hidden="true">↗</span>
+        </a>
+      );
+    })}
+  </div>
+
+  <footer class="library-footer">
+    <span>循着主题，温故知新</span>
+    <span>内容公开 · 静态托管</span>
+  </footer>
+</section>
+
+<style>
+  .library-home { max-width: 70rem; margin: 0 auto; }
+  .library-heading-row { display: flex; align-items: end; justify-content: space-between; gap: 2rem; padding: 1.3rem 0 2.1rem; border-bottom: 1px solid var(--sl-color-gray-5); }
+  .eyebrow { margin: 0 0 .45rem; color: var(--sl-color-accent-high); font-size: var(--sl-text-xs); font-weight: 700; }
+  h1 { margin: 0; color: var(--sl-color-text); font-size: 2rem; line-height: 1.2; }
+  .library-summary { margin: .75rem 0 0; color: var(--sl-color-gray-2); font-size: var(--sl-text-sm); }
+  .start-reading { display: inline-flex; align-items: center; gap: .75rem; padding: .72rem .95rem; border-radius: 6px; background: var(--sl-color-accent); color: white; font-size: var(--sl-text-sm); font-weight: 650; text-decoration: none; white-space: nowrap; }
+  .start-reading:hover { background: var(--sl-color-accent-high); color: white; }
+  .category-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 2rem; }
+  .category-row { display: grid; grid-template-columns: 2.6rem minmax(0, 1fr) 1.2rem; align-items: center; gap: .9rem; min-height: 5.3rem; border-bottom: 1px solid var(--sl-color-gray-5); color: var(--sl-color-text); text-decoration: none; }
+  .category-row:hover .category-name { color: var(--sl-color-accent-high); }
+  .category-icon { display: grid; width: 2.5rem; height: 2.5rem; place-items: center; border-radius: 6px; background: var(--sl-color-accent-low); color: var(--sl-color-accent-high); }
+  .category-copy { display: grid; gap: .2rem; }
+  .category-name { font-weight: 650; }
+  .category-count { color: var(--sl-color-gray-2); font-size: var(--sl-text-xs); }
+  .category-arrow { color: var(--sl-color-gray-3); text-align: right; }
+  .library-footer { display: flex; justify-content: space-between; gap: 1rem; padding-top: 1.3rem; color: var(--sl-color-gray-3); font-size: var(--sl-text-xs); }
+  @media (max-width: 40rem) {
+    .library-heading-row { align-items: start; flex-direction: column; gap: 1.25rem; padding-top: .5rem; }
+    .category-list { grid-template-columns: 1fr; }
+    .library-footer { flex-direction: column; gap: .35rem; }
+  }
+</style>

@@ -1,0 +1,39 @@
+---
+import { PanelLeftClose, PanelLeftOpen } from '@lucide/astro';
+interface Props { directory: 'topic' | 'outline'; controls: string; label: string }
+const { directory, controls, label } = Astro.props;
+---
+
+<button class="directory-toggle" type="button" data-directory-toggle={directory} data-directory-label={label} aria-expanded="true" aria-controls={controls} aria-label={`收起${label}`} title={`收起${label}`}>
+  <PanelLeftClose class="directory-close-icon" size={18} stroke-width={1.7} aria-hidden="true" />
+  <PanelLeftOpen class="directory-open-icon" size={18} stroke-width={1.7} aria-hidden="true" />
+</button>
+
+<script>
+  const desktop = matchMedia('(min-width: 50rem)');
+  const syncDirectories = () => {
+    document.querySelectorAll<HTMLButtonElement>('[data-directory-toggle]').forEach((button) => {
+      const directory = button.dataset.directoryToggle as 'topic' | 'outline';
+      const key = directory === 'topic' ? 'topicCollapsed' : 'outlineCollapsed';
+      // The mobile topic tree is controlled by Starlight's accessible menu popover.
+      const collapsed = (directory !== 'topic' || desktop.matches) && document.documentElement.dataset[key] === 'true';
+      const label = `${collapsed ? '展开' : '收起'}${button.dataset.directoryLabel}`;
+      button.setAttribute('aria-expanded', String(!collapsed));
+      button.setAttribute('aria-label', label);
+      button.title = label;
+      document.getElementById(button.getAttribute('aria-controls') ?? '')?.toggleAttribute('inert', collapsed);
+    });
+  };
+  document.querySelectorAll<HTMLButtonElement>('[data-directory-toggle]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const directory = button.dataset.directoryToggle as 'topic' | 'outline';
+      const key = directory === 'topic' ? 'topicCollapsed' : 'outlineCollapsed';
+      const value = document.documentElement.dataset[key] !== 'true';
+      document.documentElement.dataset[key] = String(value);
+      try { localStorage.setItem(`notes-${directory}-collapsed`, String(value)); } catch {}
+      syncDirectories();
+    });
+  });
+  desktop.addEventListener('change', syncDirectories);
+  syncDirectories();
+</script>

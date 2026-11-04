@@ -1,0 +1,135 @@
+---
+import fs from 'node:fs';
+import path from 'node:path';
+import * as cheerio from 'cheerio';
+import { imageSize } from 'image-size';
+import { createNoteMarkdownParser, renderNoteMarkdown, resolveHeadingFragment } from '../lib/note-markdown.mjs';
+import { markdownSearchPassages } from '../lib/note-search.mjs';
+import NoteOutline from './NoteOutline.astro';
+import AttachmentList from './AttachmentList.astro';
+
+const { leafPath } = Astro.props;
+const root = path.resolve(process.cwd(), 'notes', ...leafPath.split('/'));
+const sourcePath = path.join(root, 'note.md');
+const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+const fileBase = `${base}library/${leafPath}/`;
+const markdown = fs.readFileSync(sourcePath, 'utf8');
+const parser = createNoteMarkdownParser();
+const $ = cheerio.load(renderNoteMarkdown(markdown, parser), null, false);
+const external = (value?: string): boolean => /^(?:[a-z]+:|\/\/|#)/i.test(value ?? '');
+const decode = (value?: string): string => {
+  let decoded = (value ?? '').trim().split(/[?#]/, 1)[0];
+  try { decoded = decodeURIComponent(decoded); } catch {}
+  decoded = decoded.replaceAll('\\', '/');
+  return decoded.replace(/^\/+/, '').replace(/^\.\//, '');
+};
+const resolveFile = (value?: string): string | null => {
+  if (external(value)) return null;
+  const normalized = decode(value);
+  const candidates = [path.resolve(root, 'media', normalized), path.resolve(root, 'attachments', normalized), path.resolve(root, normalized)];
+  return candidates.find((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isFile()) ?? null;
+};
+const publicUrl = (file: string): string => {
+  const relative = path.relative(root, file).split(path.sep).map(encodeURIComponent).join('/');
+  return `${fileBase}${relative}`;
+};
+const referenced = new Set<string>();
+const headings = $('h1, h2, h3, h4, h5, h6').toArray().map((heading) => ({
+  id: $(heading).attr('id') ?? '',
+  text: $(heading).text(),
+}));
+
+$('img[src], source[src]').each((_, element) => {
+  const src = $(element).attr('src');
+  if (external(src)) return;
+  const file = resolveFile(src);
+  if (!file) {
+    $(element).attr('data-reference-error', 'missing');
+    return;
+  }
+  referenced.add(path.resolve(file));
+  $(element).attr('src', publicUrl(file));
+  $(element).attr('loading', 'lazy');
+  $(element).attr('decoding', 'async');
+  if (element.tagName === 'img') {
+    // Reserve the image's space before lazy loading so chapter jumps stay aligned.
+    const { width, height } = imageSize(fs.readFileSync(file));
+    if (width && height) {
+      if (!$(element).attr('width') && !$(element).attr('height')) {
+        $(element).attr('width', String(width)).attr('height', String(height));
+      }
+      const style = $(element).attr('style') ?? '';
+      $(element).attr('style', `${style};aspect-ratio:auto ${width} / ${height}`);
+    }
+  }
+});
+
+$('a[href]').each((_, element) => {
+  const href = $(element).attr('href');
+  if (href?.startsWith('#')) {
+    const target = resolveHeadingFragment(href, headings);
+    if (target) {
+      $(element).attr('href', `#${target}`);
+      return;
+    }
+  }
+  if (external(href)) return;
+  const file = resolveFile(href);
+  if (!file) return;
+  referenced.add(path.resolve(file));
+  $(element).attr('href', publicUrl(file));
+  $(element).attr('data-attachment-open', '');
+  $(element).attr('data-attachment-url', publicUrl(file));
+  $(element).attr('data-attachment-name', path.basename(file));
+});
+
+markdownSearchPassages($);
+
+const html = $.root().html() ?? '';
+const toc: Array<{ id: string; text: string; level: number }> = [];
+$('h1, h2, h3, h4, h5, h6').each((_, element) => {
+  const id = $(element).attr('id');
+  if (id) toc.push({ id, text: $(element).text(), level: Number(element.tagName.slice(1)) });
+});
+type OutlineEntry = { id: string; text: string; level: number; children: OutlineEntry[] };
+const outline: OutlineEntry[] = [];
+const outlineStack: OutlineEntry[] = [];
+for (const heading of toc) {
+  const entry: OutlineEntry = { ...heading, children: [] };
+  while (outlineStack.length && outlineStack.at(-1)!.level >= entry.level) outlineStack.pop();
+  if (outlineStack.length) outlineStack.at(-1)!.children.push(entry);
+  else outline.push(entry);
+  outlineStack.push(entry);
+}
+---
+
+{outline.length > 0 && <NoteOutline headings={outline} />}
+<div class="note-reading-layout" data-search-note={leafPath}>
+  <article class="note-prose sl-markdown-content" set:html={html} />
+  <AttachmentList leafPath={leafPath} exclude={[...referenced]} />
+</div>
+
+<style>
+  .note-reading-layout { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 2rem; max-width: 78rem; margin: 0 auto; }
+  .note-prose { min-width: 0; overflow-wrap: anywhere; }
+  .note-prose :global([id^='search-paragraph-']) { scroll-margin-top: calc(var(--sl-nav-height) + 1rem); }
+  .note-prose :global(img) { max-width: 100%; height: auto; }
+  .note-prose :global(table) { display: block; max-width: 100%; overflow-x: auto; }
+  .note-prose :global(.katex-display) { max-width: 100%; overflow-x: auto; overflow-y: hidden; padding: .2rem 0 .35rem; }
+  .note-prose :global(.katex) { font-size: 1em; }
+  .note-prose :global(.note-code-block) { overflow: hidden; margin: 1.2em 0; border: 1px solid var(--note-code-border); border-radius: 5px; background: var(--note-code-bg); color: var(--note-code-fg); }
+  .note-prose :global(.note-code-label) { padding: .3rem .8rem; border-bottom: 1px solid var(--note-code-border); color: var(--note-code-label); font: 600 .72rem/1.5 var(--sl-font-mono); text-transform: lowercase; }
+  .note-prose :global(.note-code-block pre) { max-width: 100%; margin: 0; padding: .85rem 1rem; overflow: auto; border: 0; border-radius: 0; background: transparent; color: inherit; }
+  .note-prose :global(.note-code-block code) { font: .9rem/1.65 var(--sl-font-mono); }
+  .note-prose :global(.hljs-comment), .note-prose :global(.hljs-quote) { color: var(--note-code-comment); font-style: italic; }
+  .note-prose :global(.hljs-keyword), .note-prose :global(.hljs-selector-tag), .note-prose :global(.hljs-literal), .note-prose :global(.hljs-meta-keyword) { color: var(--note-code-keyword); font-weight: 600; }
+  .note-prose :global(.hljs-string), .note-prose :global(.hljs-regexp), .note-prose :global(.hljs-addition) { color: var(--note-code-string); }
+  .note-prose :global(.hljs-number), .note-prose :global(.hljs-symbol), .note-prose :global(.hljs-bullet) { color: var(--note-code-number); }
+  .note-prose :global(.hljs-title), .note-prose :global(.hljs-title.function_), .note-prose :global(.hljs-section) { color: var(--note-code-title); }
+  .note-prose :global(.hljs-built_in), .note-prose :global(.hljs-type), .note-prose :global(.hljs-class .hljs-title) { color: var(--note-code-type); }
+  .note-prose :global(.hljs-attr), .note-prose :global(.hljs-attribute), .note-prose :global(.hljs-property) { color: var(--note-code-attribute); }
+  @media (min-width: 100rem) {
+    .note-reading-layout:has(> :global(.attachment-rail)) { grid-template-columns: minmax(0, 1fr) minmax(11rem, 13rem); }
+    .note-reading-layout > :global(.attachment-rail) { position: sticky; top: 5.5rem; }
+  }
+</style>

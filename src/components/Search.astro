@@ -1,0 +1,236 @@
+---
+import { Search as SearchIcon, X } from '@lucide/astro';
+const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+---
+
+<search-box data-search-base={base}>
+  <button class="search-trigger" type="button" data-search-open aria-label="搜索笔记" aria-keyshortcuts="Control+K" title="搜索笔记 (Ctrl+K)"><SearchIcon size={17} aria-hidden="true" /><span>搜索</span><kbd>Ctrl K</kbd></button>
+  <dialog class="search-dialog" aria-label="搜索笔记">
+    <div class="search-head"><label class="search-input"><SearchIcon size={18} aria-hidden="true" /><input type="search" data-search-input placeholder="输入关键词…" autocomplete="off" /><kbd>Esc</kbd></label><button class="search-close" type="button" aria-label="关闭搜索"><X size={19} aria-hidden="true" /></button></div>
+    <div class="search-options" role="group" aria-label="搜索范围">
+      <button type="button" data-scope="topic" aria-pressed="false">知识目录</button>
+      <button type="button" data-scope="outline" aria-pressed="false">章节目录</button>
+      <button type="button" data-scope="body" aria-pressed="true">笔记正文</button>
+    </div>
+    <div class="search-scope-extra" data-body-options hidden>
+      <label><input type="checkbox" data-current-note /> 仅搜索当前笔记</label>
+    </div>
+    <div class="search-history" data-search-history hidden><span>最近搜索</span><div data-history-items></div><button type="button" data-history-clear title="清除搜索历史" aria-label="清除搜索历史"><X size={14} aria-hidden="true" /></button></div>
+    <p class="search-status" data-search-status role="status" aria-live="polite">输入关键词开始搜索</p>
+    <ol class="search-results" data-search-results></ol>
+    <button class="search-more" type="button" data-search-more hidden>显示更多匹配</button>
+  </dialog>
+</search-box>
+
+<script>
+  type Scope = 'topic' | 'outline' | 'body';
+  type SearchResult = { url: string; excerpt: string; meta: { title?: string }; data: () => Promise<{ url: string; excerpt: string; meta: { title?: string } }> };
+  type SearchEngine = { search: (query: string, options: { filters: Record<string, string[]> }) => Promise<{ results: SearchResult[] }> };
+  class SearchBox extends HTMLElement {
+    connectedCallback() {
+      const dialog = this.querySelector<HTMLDialogElement>('dialog')!;
+      const input = this.querySelector<HTMLInputElement>('[data-search-input]')!;
+      const results = this.querySelector<HTMLOListElement>('[data-search-results]')!;
+      const status = this.querySelector<HTMLElement>('[data-search-status]')!;
+      const bodyOptions = this.querySelector<HTMLElement>('[data-body-options]')!;
+      const onlyCurrent = this.querySelector<HTMLInputElement>('[data-current-note]')!;
+      const history = this.querySelector<HTMLElement>('[data-search-history]')!;
+      const historyItems = this.querySelector<HTMLElement>('[data-history-items]')!;
+      const more = this.querySelector<HTMLButtonElement>('[data-search-more]')!;
+      const base = this.dataset.searchBase ?? '/';
+      const currentNote = document.querySelector<HTMLElement>('[data-search-note]')?.dataset.searchNote ?? '';
+      let scope: Scope = 'body';
+      let pagefind: SearchEngine | null = null;
+      let debounce: ReturnType<typeof setTimeout>;
+      let historyPending = false;
+      let revision = 0;
+      let matches: SearchResult[] = [];
+      let displayed = 0;
+      let loading: Promise<SearchEngine> | undefined;
+      const historyKey = 'notes-search-history';
+      const getHistory = (): string[] => {
+        try {
+          const values: unknown = JSON.parse(sessionStorage.getItem(historyKey) || '[]');
+          return Array.isArray(values) ? values.filter((value): value is string => typeof value === 'string').slice(0, 8) : [];
+        } catch { return []; }
+      };
+      const saveHistory = (query: string) => {
+        if (!query) return;
+        const values = [query, ...getHistory().filter((item) => item !== query)].slice(0, 8);
+        try { sessionStorage.setItem(historyKey, JSON.stringify(values)); } catch {}
+        renderHistory();
+      };
+      const commitHistory = () => {
+        if (!historyPending) return;
+        historyPending = false;
+        // Commit the current input even if its debounced search has not finished yet.
+        saveHistory(input.value.trim());
+      };
+      const renderHistory = () => {
+        const values = getHistory(); historyItems.replaceChildren(); history.hidden = !values.length;
+        for (const value of values) {
+          const button = document.createElement('button'); button.type = 'button'; button.textContent = value;
+          button.addEventListener('click', () => { input.value = value; void run(); }); historyItems.append(button);
+        }
+      };
+      const appendExcerpt = (target: HTMLElement, html: string) => {
+        const parsed = new DOMParser().parseFromString(html, 'text/html');
+        const copy = (from: Node, to: Node) => from.childNodes.forEach((child) => {
+          if (child.nodeType === Node.TEXT_NODE) to.appendChild(document.createTextNode(child.textContent ?? ''));
+          else if (child instanceof HTMLElement && child.tagName === 'MARK') { const mark = document.createElement('mark'); copy(child, mark); to.appendChild(mark); }
+          else copy(child, to);
+        });
+        copy(parsed.body, target);
+      };
+      const appendTitle = (target: HTMLElement, title: string, query: string) => {
+        const words = query.toLocaleLowerCase().split(/\s+/).filter(Boolean);
+        const lower = title.toLocaleLowerCase();
+        let start = 0;
+        while (start < title.length) {
+          const hits = words.map((word) => ({ word, at: lower.indexOf(word, start) })).filter(({ at }) => at >= 0).sort((a, b) => a.at - b.at || b.word.length - a.word.length);
+          if (!hits.length) { target.append(document.createTextNode(title.slice(start))); break; }
+          const { word, at } = hits[0];
+          target.append(document.createTextNode(title.slice(start, at)));
+          const mark = document.createElement('mark'); mark.textContent = title.slice(at, at + word.length); target.append(mark);
+          start = at + word.length;
+        }
+      };
+      const showMore = async (request: number, query: string) => {
+        more.disabled = true;
+        const batch = matches.slice(displayed, displayed + 40);
+        const details = await Promise.all(batch.map((match) => match.data()));
+        if (request !== revision) return;
+        const fragment = document.createDocumentFragment();
+        for (const detail of details) {
+          const item = document.createElement('li');
+          const link = document.createElement('a'); link.href = detail.url;
+          const title = document.createElement('strong'); appendTitle(title, detail.meta?.title ?? '笔记', query);
+          const excerpt = document.createElement('span'); appendExcerpt(excerpt, detail.excerpt);
+          link.append(title, excerpt); item.append(link); fragment.append(item);
+        }
+        results.append(fragment); displayed += details.length;
+        more.disabled = false;
+        more.hidden = displayed >= matches.length;
+        more.textContent = `显示更多匹配（已显示 ${displayed} / ${matches.length}）`;
+      };
+      const run = async () => {
+        const request = ++revision;
+        const query = input.value.trim();
+        results.replaceChildren(); more.hidden = true; displayed = 0;
+        if (!query) { status.textContent = '输入关键词开始搜索'; return; }
+        status.textContent = pagefind ? '正在搜索…' : '正在载入搜索索引…';
+        try {
+          loading ??= import(/* @vite-ignore */ `${base}scoped-search/pagefind.js`);
+          pagefind = await loading;
+          if (request !== revision || !pagefind) return;
+          const filters: Record<string, string[]> = { scope: [scope] };
+          if (scope === 'body' && onlyCurrent.checked && currentNote) filters.note = [currentNote];
+          const response = await pagefind.search(query, { filters });
+          if (request !== revision) return;
+          matches = response.results;
+          status.textContent = matches.length ? `找到 ${matches.length} 处匹配${scope === 'body' ? '段落' : ''}` : '没有匹配结果';
+          await showMore(request, query);
+          if (request !== revision) return;
+        } catch {
+          if (request !== revision) return;
+          loading = undefined; more.hidden = true;
+          status.textContent = '搜索载入失败，请稍后重新搜索';
+        }
+      };
+      more.addEventListener('click', () => {
+        void showMore(revision, input.value.trim()).catch(() => {
+          more.disabled = false; status.textContent = '更多结果载入失败，请重试';
+        });
+      });
+      results.addEventListener('click', (event) => {
+        if (!(event.target instanceof Element) || !event.target.closest('a')) return;
+        dialog.close();
+      });
+      this.querySelector('[data-search-open]')?.addEventListener('click', () => { dialog.showModal(); input.focus(); });
+      this.querySelectorAll<HTMLButtonElement>('[data-scope]').forEach((button) => button.addEventListener('click', () => {
+        scope = button.dataset.scope as Scope;
+        this.querySelectorAll('[data-scope]').forEach((item) => item.setAttribute('aria-pressed', String(item === button)));
+        bodyOptions.hidden = scope !== 'body' || !currentNote;
+        void run();
+      }));
+      bodyOptions.hidden = !currentNote;
+      onlyCurrent.addEventListener('change', () => void run());
+      input.addEventListener('input', () => {
+        historyPending = true;
+        ++revision; clearTimeout(debounce);
+        debounce = setTimeout(() => void run(), 180);
+      });
+      input.addEventListener('keydown', (event) => {
+        if (event.isComposing) return;
+        if (event.key === 'Tab') commitHistory();
+        if (event.key === 'Enter') { commitHistory(); clearTimeout(debounce); void run(); }
+      });
+      // A pause in typing is not a completed query. Only the next non-input action commits it.
+      dialog.addEventListener('click', (event) => {
+        if (!(event.target instanceof Element)) return;
+        if (event.target.closest('.search-input, [data-history-clear]')) return;
+        commitHistory();
+      }, { capture: true });
+      dialog.addEventListener('wheel', (event) => {
+        if (event.target instanceof Element && !event.target.closest('.search-input')) commitHistory();
+      }, { passive: true });
+      dialog.addEventListener('close', commitHistory);
+      this.querySelector('[data-history-clear]')?.addEventListener('click', () => {
+        historyPending = false;
+        try { sessionStorage.removeItem(historyKey); } catch {}
+        renderHistory();
+      });
+      renderHistory();
+      this.querySelector('.search-close')?.addEventListener('click', () => dialog.close());
+      dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
+      window.addEventListener('keydown', (event) => {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); dialog.open ? dialog.close() : dialog.showModal(); input.focus(); }
+        if (event.key === 'Escape' && dialog.open && !event.isComposing) {
+          // Search inputs otherwise clear themselves on Escape before the close event.
+          event.preventDefault(); commitHistory(); dialog.close();
+        }
+      });
+      this.querySelectorAll<HTMLButtonElement>('[data-scope]').forEach((button) => {
+        if (button.getAttribute('aria-pressed') === 'true') scope = button.dataset.scope as Scope;
+      });
+    }
+  }
+  customElements.define('search-box', SearchBox);
+</script>
+
+<style is:global>
+  search-box { display: block; }
+  .search-trigger { display: flex; align-items: center; gap: .55rem; width: min(22rem, 42vw); height: 2.35rem; padding: 0 .7rem; border: 1px solid var(--sl-color-gray-5); border-radius: 6px; background: var(--sl-color-bg); color: var(--sl-color-gray-2); cursor: pointer; }
+  .search-trigger span { font-size: .85rem; }
+  .search-trigger kbd, .search-input kbd { margin-left: auto; padding: .12rem .35rem; border: 1px solid var(--sl-color-gray-5); border-radius: 4px; color: var(--sl-color-gray-3); font: .65rem var(--sl-font-mono); }
+  .search-dialog { position: fixed; inset: 8vh 1rem auto; width: min(42rem, calc(100vw - 2rem)); max-width: none; max-height: 84vh; padding: 1rem; margin: 0 auto; border: 1px solid var(--sl-color-gray-5); border-radius: 9px; background: var(--sl-color-bg); color: var(--sl-color-text); box-shadow: 0 18px 70px #0005; }
+  .search-dialog::backdrop { background: #10191488; backdrop-filter: blur(2px); }
+  .search-dialog[open] { display: flex; flex-direction: column; overflow: hidden; }
+  .search-dialog > :not(.search-results) { flex-shrink: 0; }
+  .search-head { display: flex; align-items: center; gap: .6rem; }
+  .search-input { display: flex; flex: 1; align-items: center; gap: .6rem; min-width: 0; padding: .2rem .7rem; border: 1px solid var(--sl-color-gray-5); border-radius: 6px; color: var(--sl-color-gray-3); }
+  .search-input input { flex: 1; min-width: 0; height: 2.5rem; padding: 0; border: 0; outline: 0; background: transparent; color: var(--sl-color-text); font: .95rem var(--sl-font); }
+  .search-close { display: grid; width: 2.35rem; height: 2.35rem; place-items: center; padding: 0; border: 1px solid var(--sl-color-gray-5); border-radius: 5px; background: var(--sl-color-gray-6); color: var(--sl-color-gray-2); cursor: pointer; }
+  .search-options { display: flex; gap: .4rem; margin-top: .8rem; }
+  .search-options button { min-height: 2rem; padding: .35rem .7rem; border: 1px solid var(--sl-color-gray-5); border-radius: 5px; background: transparent; color: var(--sl-color-gray-2); font: .78rem var(--sl-font); cursor: pointer; }
+  .search-options button[aria-pressed='true'] { border-color: var(--sl-color-accent); background: var(--sl-color-accent-low); color: var(--sl-color-accent-high); }
+  .search-scope-extra { padding: .55rem .2rem 0; color: var(--sl-color-gray-2); font-size: .75rem; }
+  .search-scope-extra label { display: inline-flex; align-items: center; gap: .4rem; cursor: pointer; }
+  .search-scope-extra input { width: 1rem; height: 1rem; margin: 0; accent-color: var(--sl-color-accent); }
+  .search-history { display: flex; align-items: center; gap: .45rem; margin-top: .65rem; color: var(--sl-color-gray-3); font-size: .7rem; }
+  .search-history > span { flex: 0 0 auto; }
+  .search-history [data-history-items] { display: flex; flex: 1; gap: .35rem; overflow: auto; }
+  .search-history [data-history-items] button { flex: 0 0 auto; padding: .18rem .45rem; border: 1px solid var(--sl-color-gray-5); border-radius: 4px; background: var(--sl-color-gray-6); color: var(--sl-color-gray-2); font: .68rem var(--sl-font); cursor: pointer; }
+  .search-history [data-history-clear] { display: grid; width: 1.7rem; height: 1.7rem; flex: 0 0 auto; place-items: center; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--sl-color-gray-3); cursor: pointer; }
+  .search-status { padding: .55rem 0; margin: .35rem 0; color: var(--sl-color-gray-3); font-size: .75rem; }
+  .search-results { display: grid; gap: .35rem; min-height: 0; max-height: 60vh; padding: 0; margin: 0; overflow: auto; overscroll-behavior: contain; list-style: none; }
+  .search-results a { display: grid; gap: .25rem; padding: .7rem .75rem; border-radius: 5px; color: var(--sl-color-text); text-decoration: none; }
+  .search-results a:hover, .search-results a:focus-visible { background: var(--sl-color-gray-6); }
+  .search-results strong { font-size: .84rem; }
+  .search-results span { display: -webkit-box; overflow: hidden; color: var(--sl-color-gray-3); font-size: .74rem; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .search-results mark { border-radius: 2px; background: #f2d879; color: #29342d; font-weight: 700; }
+  .search-more { display: block; width: 100%; margin-top: .6rem; padding: .55rem; border: 1px solid var(--sl-color-gray-5); border-radius: 5px; color: var(--sl-color-accent-high); background: var(--sl-color-accent-low); font: .78rem var(--sl-font); cursor: pointer; }
+  .search-more:disabled { opacity: .6; cursor: wait; }
+  .search-dialog [hidden] { display: none !important; }
+  @media (max-width: 49.99rem) { .search-trigger { width: auto; padding-inline: .55rem; } .search-trigger span, .search-trigger kbd { display: none; } .search-dialog { inset-block-start: 5vh; padding: .75rem; } .search-options { gap: .25rem; } .search-options button { flex: 1; padding-inline: .25rem; font-size: .72rem; } }
+</style>

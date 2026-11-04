@@ -1,0 +1,154 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1320" viewBox="0 0 1920 1320">
+  <defs>
+    <style>
+      .title { font: 700 46px "Microsoft YaHei", "SimHei", sans-serif; fill: #172033; }
+      .subtitle { font: 400 22px "Microsoft YaHei", "SimHei", sans-serif; fill: #526078; }
+      .h1 { font: 700 29px "Microsoft YaHei", "SimHei", sans-serif; fill: #172033; }
+      .h2 { font: 700 23px "Microsoft YaHei", "SimHei", sans-serif; fill: #172033; }
+      .body { font: 400 20px "Microsoft YaHei", "SimHei", sans-serif; fill: #344054; }
+      .small { font: 400 18px "Microsoft YaHei", "SimHei", sans-serif; fill: #475467; }
+      .tag { font: 700 18px "Microsoft YaHei", "SimHei", sans-serif; }
+      .center { text-anchor: middle; }
+      .arrow { stroke: #667085; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+      .branch { stroke: #667085; stroke-width: 3; fill: none; }
+      .combine { stroke: #d97706; stroke-width: 3; stroke-dasharray: 10 8; fill: none; marker-end: url(#orangeArrow); }
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#667085"/>
+    </marker>
+    <marker id="orangeArrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#d97706"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#101828" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <rect width="1920" height="1320" fill="#f8fafc"/>
+  <text x="960" y="60" class="title center">节点分类任务中的方法层级与组合关系</text>
+  <text x="960" y="98" class="subtitle center">三条主路线在目标上并列，但关系推断既可以直接完成分类，也可以接在基础分类模型之后</text>
+
+  <!-- Inputs -->
+  <rect x="610" y="130" rx="18" width="700" height="96" fill="#172033" filter="url(#shadow)"/>
+  <text x="960" y="169" class="h1 center" style="fill:#ffffff">节点分类任务：预测未知节点标签 yᵥ</text>
+  <text x="960" y="204" class="body center" style="fill:#e4e7ec">可用输入：图结构 G、节点属性 X、少量已知标签 Yᴸ</text>
+
+  <path d="M960 226 L960 262 L325 262 L325 302" class="branch"/>
+  <path d="M960 262 L960 302" class="branch"/>
+  <path d="M960 262 L1595 262 L1595 302" class="branch"/>
+
+  <!-- Route A -->
+  <rect x="50" y="302" rx="22" width="600" height="720" fill="#eef6ff" stroke="#4b8edb" stroke-width="3" filter="url(#shadow)"/>
+  <rect x="50" y="302" rx="22" width="600" height="82" fill="#d9ebff"/>
+  <text x="350" y="337" class="h1 center">路线 A：先构造特征／表示</text>
+  <text x="350" y="367" class="small center">再使用普通分类器</text>
+
+  <text x="82" y="423" class="h2">第一层：为每个节点构造固定长度向量</text>
+
+  <rect x="82" y="446" rx="14" width="536" height="104" fill="#ffffff" stroke="#80afe6" stroke-width="2"/>
+  <text x="104" y="479" class="h2">A1. 节点原始属性</text>
+  <text x="104" y="511" class="small">文本、年龄、收入、类别属性、图像特征等</text>
+  <text x="104" y="538" class="tag" fill="#175cd3">输出：xᵥ</text>
+
+  <rect x="82" y="568" rx="14" width="536" height="122" fill="#ffffff" stroke="#80afe6" stroke-width="2"/>
+  <text x="104" y="601" class="h2">A2. 人工结构描述</text>
+  <text x="104" y="633" class="small">度、中心性、聚类系数、Graphlet/GDV 等</text>
+  <text x="104" y="661" class="small">把图结构变成显式、可解释的特征</text>
+  <text x="510" y="661" class="tag" fill="#175cd3">输出：sᵥ</text>
+
+  <rect x="82" y="708" rx="14" width="536" height="140" fill="#ffffff" stroke="#80afe6" stroke-width="2"/>
+  <text x="104" y="741" class="h2">A3. 浅层图表示学习</text>
+  <text x="104" y="773" class="small">DeepWalk、Node2Vec：随机游走产生共现样本，</text>
+  <text x="104" y="801" class="small">Skip-gram 直接优化每个训练节点的一行嵌入参数。</text>
+  <text x="104" y="829" class="tag" fill="#175cd3">输出：zᵥ；不是关系推断，也不是 GNN 式向量传播</text>
+
+  <path d="M350 848 L350 880" class="arrow"/>
+  <rect x="118" y="880" rx="15" width="464" height="60" fill="#dcecff" stroke="#4b8edb" stroke-width="2"/>
+  <text x="350" y="918" class="h2 center">拼接／选择得到分类输入 [xᵥ ‖ sᵥ ‖ zᵥ]</text>
+  <path d="M350 940 L350 962" class="arrow"/>
+  <rect x="118" y="962" rx="15" width="464" height="42" fill="#ffffff" stroke="#4b8edb" stroke-width="2"/>
+  <text x="350" y="990" class="h2 center">逻辑回归／SVM／MLP → 初始或最终预测</text>
+
+  <!-- Route B -->
+  <rect x="680" y="302" rx="22" width="560" height="720" fill="#f5f0ff" stroke="#8656ce" stroke-width="3" filter="url(#shadow)"/>
+  <rect x="680" y="302" rx="22" width="560" height="82" fill="#e8dcff"/>
+  <text x="960" y="337" class="h1 center">路线 B：深层图表示学习</text>
+  <text x="960" y="367" class="small center">GNN 编码器与分类头通常端到端训练</text>
+
+  <rect x="716" y="428" rx="15" width="488" height="82" fill="#ffffff" stroke="#b092df" stroke-width="2"/>
+  <text x="960" y="461" class="h2 center">输入：图结构 G＋节点属性 X</text>
+  <text x="960" y="491" class="small center">没有属性时也可使用可学习初始向量或结构特征</text>
+
+  <path d="M960 510 L960 548" class="arrow"/>
+  <rect x="716" y="548" rx="15" width="488" height="148" fill="#ffffff" stroke="#b092df" stroke-width="2"/>
+  <text x="960" y="584" class="h2 center">GNN／MPNN 图编码器</text>
+  <text x="960" y="620" class="body center">邻居发送隐藏向量消息</text>
+  <text x="960" y="650" class="body center">聚合邻居信息，再更新节点表示</text>
+  <text x="960" y="681" class="tag center" fill="#6941c6">一层约覆盖一跳；输出节点表示 hᵥ</text>
+
+  <path d="M960 696 L960 738" class="arrow"/>
+  <rect x="716" y="738" rx="15" width="488" height="84" fill="#ffffff" stroke="#b092df" stroke-width="2"/>
+  <text x="960" y="772" class="h2 center">分类预测头：线性层／MLP＋Softmax</text>
+  <text x="960" y="802" class="small center">把 hᵥ 转换为类别概率</text>
+
+  <path d="M960 822 L960 862" class="arrow"/>
+  <rect x="716" y="862" rx="15" width="488" height="96" fill="#eee5ff" stroke="#8656ce" stroke-width="2"/>
+  <text x="960" y="899" class="h2 center">分类损失反向传播</text>
+  <text x="960" y="930" class="small center">同时更新预测头和各层消息传递参数</text>
+
+  <text x="960" y="995" class="small center">与路线 A 的共同点：最终都要把节点向量变成类别分数。</text>
+
+  <!-- Route C -->
+  <rect x="1270" y="302" rx="22" width="600" height="720" fill="#ecfdf3" stroke="#2ca56d" stroke-width="3" filter="url(#shadow)"/>
+  <rect x="1270" y="302" rx="22" width="600" height="82" fill="#d1fadf"/>
+  <text x="1570" y="337" class="h1 center">路线 C：关系推断</text>
+  <text x="1570" y="367" class="small center">直接或二次利用邻居标签、预测和概率依赖</text>
+
+  <text x="1302" y="423" class="h2">C1. 可直接从图和少量标签开始</text>
+
+  <rect x="1302" y="446" rx="14" width="256" height="158" fill="#ffffff" stroke="#59c88d" stroke-width="2"/>
+  <text x="1430" y="481" class="h2 center">标签传播 LP</text>
+  <text x="1430" y="515" class="small center">传播、平均标签分数</text>
+  <text x="1430" y="544" class="small center">通常固定已标注节点</text>
+  <text x="1430" y="578" class="tag center" fill="#18794e">输出未知节点标签分数</text>
+
+  <rect x="1580" y="446" rx="14" width="256" height="158" fill="#ffffff" stroke="#9b6ed4" stroke-width="2"/>
+  <text x="1708" y="481" class="h2 center">置信传播 BP</text>
+  <text x="1708" y="515" class="small center">传播条件证据消息</text>
+  <text x="1708" y="544" class="small center">节点势＋边兼容势</text>
+  <text x="1708" y="578" class="tag center" fill="#6941c6">输出边缘概率／置信度</text>
+
+  <text x="1302" y="650" class="h2">C2. 需要或可以利用基础模型预测</text>
+
+  <rect x="1302" y="674" rx="14" width="256" height="190" fill="#ffffff" stroke="#f0a13e" stroke-width="2"/>
+  <text x="1430" y="709" class="h2 center">ICA</text>
+  <text x="1430" y="743" class="small center">φ₁(fᵥ) 产生初始标签</text>
+  <text x="1430" y="772" class="small center">根据邻居标签构造 zᵥ</text>
+  <text x="1430" y="801" class="small center">φ₂(fᵥ,zᵥ) 重新分类</text>
+  <text x="1430" y="835" class="tag center" fill="#b54708">交替迭代；不是基本 LP</text>
+
+  <rect x="1580" y="674" rx="14" width="256" height="190" fill="#ffffff" stroke="#5c91db" stroke-width="2"/>
+  <text x="1708" y="709" class="h2 center">Correct &amp; Smooth</text>
+  <text x="1708" y="743" class="small center">接收任意基础模型预测</text>
+  <text x="1708" y="772" class="small center">Correct 传播预测残差</text>
+  <text x="1708" y="801" class="small center">Smooth 传播修正分数</text>
+  <text x="1708" y="835" class="tag center" fill="#175cd3">使用 LP 式扩散算子</text>
+
+  <rect x="1320" y="902" rx="14" width="500" height="82" fill="#dff8e9" stroke="#2ca56d" stroke-width="2"/>
+  <text x="1570" y="936" class="h2 center">关系推断的主要输出</text>
+  <text x="1570" y="966" class="body center">最终标签、类别概率或节点置信度</text>
+
+  <!-- Combination arrows -->
+  <path d="M650 930 C820 1080 1250 1065 1430 864" class="combine"/>
+  <text x="955" y="1090" class="tag center" fill="#b54708">路线 A 的分类结果可作为 ICA 初值或 C&amp;S 基础预测</text>
+
+  <path d="M1240 820 C1380 1040 1570 1040 1708 864" class="combine"/>
+  <text x="1510" y="1060" class="tag center" fill="#b54708">GNN 预测也可继续交给 C&amp;S</text>
+
+  <!-- Summary -->
+  <rect x="110" y="1122" rx="18" width="1700" height="174" fill="#ffffff" stroke="#d97706" stroke-width="3" stroke-dasharray="11 8" filter="url(#shadow)"/>
+  <text x="960" y="1160" class="h1 center" style="fill:#b54708">最终层级判断</text>
+  <text x="960" y="1196" class="body center">路线 A、B、C 是解决节点分类的三类主路线；它们在“主要做什么”这一层面并列，但不是互斥的。</text>
+  <text x="960" y="1228" class="small center">结构描述与浅层嵌入负责产生分类输入；GNN 同时学习表示和预测；关系推断可以直接分类，也可以接在路线 A 或 B 的预测之后继续修正。</text>
+  <text x="960" y="1264" class="small center" style="fill:#6d28d9">一般消息传递是跨路线的计算机制：LP 传标签分数，BP 传条件证据，GNN 传隐藏向量；它不是第四条分类路线。</text>
+</svg>

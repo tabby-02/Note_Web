@@ -1,0 +1,180 @@
+groups:
+  - id: computer-foundations
+    title: 计算机基础与工程
+    children:
+      - id: data-structures
+        title: 数据结构与算法
+        type: gallery
+        sourceDir: Data_Structure_and_Algorithms
+      - id: computer-networks
+        title: 计算机网络
+        type: markdown
+        sourceDir: Computer_Network
+        sourceFile: 计网.md
+      - id: operating-systems
+        title: 操作系统
+        type: markdown
+        sourceDir: Operating_System_Principles_and_Practice
+        sourceFile: 笔记.md
+      - id: compilers
+        title: 编译原理
+        type: markdown
+        sourceDir: Compilation_Principle
+        sourceFile: 笔记.md
+      - id: databases
+        title: 数据与数据库
+        children:
+          - id: database-principles
+            title: 数据库原理与应用
+            type: markdown
+            sourceDir: Principles_and_Applications_of_Database
+            sourceFile: 笔记.md
+          - id: mysql
+            title: MySQL
+            type: markdown
+            sourceDir: mysql_note
+            sourceFile: mysql.md
+      - id: software-engineering
+        title: 软件工程
+        type: markdown
+        sourceDir: Software_Engineering
+        sourceFile: 笔记.md
+  - id: data-and-ai
+    title: AI
+    children:
+      - id: machine-learning
+        title: 机器学习
+        type: markdown
+        sourceDir: Machine_Learning
+        sourceFile: machine_learning.md
+      - id: graph-machine-learning
+        title: 图机器学习（CS224W）
+        type: markdown
+        sourceDir: CS224W图机器学习
+        sourceFile: CS224W图机器学习笔记.md
+      - id: graphrag
+        title: Graphrag
+        type: markdown
+  - id: security
+    title: 网络与信息安全
+    children:
+      - id: modern-cryptography
+        title: 现代密码学
+        type: markdown
+        sourceDir: Modern_Cryptography
+        sourceFile: 笔记.md
+      - id: network-defense
+        title: 网络攻防
+        type: markdown
+        sourceDir: Network_Attack_and_Defense_Technology
+        sourceFile: 笔记.md
+  - id: programming-languages
+    title: 编程语言与数据格式
+    legacySlugs:
+      - programming-and-app-development/languages
+      - programming-and-app-development/markup-and-data-formats
+    children:
+      - id: cpp
+        title: C++
+        type: markdown
+        sourceDir: c++_note
+        sourceFile: c++.md
+        legacySlugs:
+          - programming-and-app-development/languages/cpp
+      - id: python
+        title: Python
+        type: markdown
+        sourceDir: python_note
+        sourceFile: python.md
+        legacySlugs:
+          - programming-and-app-development/languages/python
+      - id: java
+        title: Java
+        children:
+          - id: java-introduction
+            title: Java 入门记录
+            type: docx
+            sourceDir: java_note
+            sourceFile: 笔记.docx
+            legacySlugs:
+              - programming-and-app-development/languages/java/java-introduction
+          - id: java-language
+            title: Java 语言笔记
+            type: markdown
+            sourceDir: java_note
+            sourceFile: 笔记.md
+            legacySlugs:
+              - programming-and-app-development/languages/java/java-language
+        legacySlugs:
+          - programming-and-app-development/languages/java
+      - id: xml
+        title: XML 语法与解析
+        type: markdown
+        sourceDir: xml_note
+        sourceFile: xml.md
+        legacySlugs:
+          - programming-and-app-development/application-development/xml
+          - programming-and-app-development/markup-and-data-formats/xml
+  - id: application-development
+    title: 应用开发
+    legacySlugs:
+      - programming-and-app-development/mobile-development
+      - programming-and-app-development/application-development
+    children:
+      - id: web-and-frontend
+        title: Web 与前端开发
+        legacySlugs:
+          - programming-and-app-development/application-development/frontend
+          - programming-and-app-development/web-and-frontend
+        children:
+          - id: web-basics
+            title: Web 基础：HTML、CSS、JavaScript
+            type: markdown
+            sourceDir: front_note
+            sourceFile: 前端学习笔记.md
+            sourceSections:
+              - （一）HTML（超文本标记语言）
+              - （二）CSS（层叠样式表）
+              - （三）JavaScript
+              - 备注：
+              - （五）HTML5
+            legacySlugs:
+              - programming-and-app-development/web-and-frontend/web-basics
+          - id: frontend-engineering-vue
+            title: 前端工程与 Vue
+            type: markdown
+            sourceDir: front_note
+            sourceFile: 前端学习笔记.md
+            sourceSections:
+              - (四)项目创建
+              - （六）VUE
+            legacySlugs:
+              - programming-and-app-development/web-and-frontend/frontend-engineering-vue
+      - id: java-web-pom
+        title: Java Web / Maven POM 资料
+        type: docx
+        sourceDir: java_note
+        sourceFile: Web的pom源码.docx
+        legacySlugs:
+          - programming-and-app-development/languages/java/java-web-pom
+      - id: android
+        title: Android 工程与界面资源
+        type: markdown
+        sourceDir: android_note
+        sourceFile: android.md
+        legacySlugs:
+          - programming-and-app-development/application-development/android
+          - programming-and-app-development/mobile-development/android
+  - id: tools-and-environments
+    title: 开发工具与运行环境
+    children:
+      - id: git
+        title: Git
+        type: markdown
+        sourceDir: git_note
+        sourceFile: git.md
+      - id: ubuntu
+        title: Ubuntu
+        type: markdown
+        sourceDir: ubuntu_note
+        sourceFile: ubuntu.md

@@ -1,0 +1,93 @@
+---
+import { Download, FileText } from '@lucide/astro';
+import AttachmentList from './AttachmentList.astro';
+import fs from 'node:fs';
+import path from 'node:path';
+import JSZip from 'jszip';
+import * as cheerio from 'cheerio';
+import { wordSearchPassages } from '../lib/note-search.mjs';
+
+const { leafPath } = Astro.props;
+const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+const docxUrl = `${base}library/${leafPath}/note.docx`;
+const docId = `docx-${leafPath.replaceAll('/', '-')}`;
+const zip = await JSZip.loadAsync(fs.readFileSync(path.resolve('notes', leafPath, 'note.docx')));
+const xml = await zip.file('word/document.xml')!.async('string');
+const passages = wordSearchPassages(cheerio.load(xml, { xmlMode: true }));
+---
+
+<div class="word-layout" data-search-note={leafPath}>
+  <div class="word-reader">
+    <div class="word-toolbar">
+      <span><FileText size={16} stroke-width={1.8} aria-hidden="true" /> Word 文档</span>
+      <a href={docxUrl} download><Download size={15} aria-hidden="true" /> 下载原文件</a>
+    </div>
+    <div class="word-status" data-docx-status>正在载入文档…</div>
+    <div class="word-document" id={docId} data-docx-url={docxUrl} data-search-passages={JSON.stringify(passages)}></div>
+  </div>
+  <AttachmentList leafPath={leafPath} />
+</div>
+
+<script>
+  import { renderAsync } from 'docx-preview';
+
+  document.querySelectorAll<HTMLElement>('[data-docx-url]').forEach(async (container) => {
+    const status = container.parentElement?.querySelector<HTMLElement>('[data-docx-status]');
+    try {
+      const response = await fetch(container.dataset.docxUrl ?? '');
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const buffer = await response.arrayBuffer();
+      await renderAsync(buffer, container, container, {
+        className: 'docx-page',
+        inWrapper: true,
+        breakPages: true,
+        ignoreWidth: false,
+        ignoreHeight: false,
+        renderHeaders: true,
+        renderFooters: true,
+        renderFootnotes: true,
+        renderEndnotes: true,
+      });
+      const passages: Array<{ id: string; text: string }> = JSON.parse(container.dataset.searchPassages ?? '[]');
+      const compact = (text: string) => text.replace(/\s+/g, '');
+      const paragraphs = [...container.querySelectorAll<HTMLElement>('.docx-page > article p')];
+      // Match the source text so headers, footnotes and page breaks cannot shift targets.
+      let cursor = 0;
+      for (const passage of passages) {
+        const text = compact(passage.text);
+        const position = paragraphs.findIndex((element, index) => index >= cursor && compact(element.textContent ?? '') === text);
+        if (position < 0) continue;
+        paragraphs[position].id = passage.id;
+        cursor = position + 1;
+      }
+      if (location.hash) {
+        let id = location.hash.slice(1);
+        try { id = decodeURIComponent(id); } catch {}
+        requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ block: 'start' }));
+      }
+      status?.remove();
+    } catch (error) {
+      if (status) status.textContent = '文档预览失败，请下载原文件查看。';
+      console.error('DOCX preview failed', error);
+    }
+  });
+</script>
+
+<style>
+  .word-layout { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 2rem; max-width: 78rem; margin: 0 auto; }
+  .word-reader { min-width: 0; }
+  .word-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .7rem .9rem; border: 1px solid var(--sl-color-gray-5); border-bottom: 0; background: var(--sl-color-gray-6); color: var(--sl-color-gray-2); font-size: var(--sl-text-xs); }
+  .word-toolbar span, .word-toolbar a { display: inline-flex; align-items: center; gap: .45rem; }
+  .word-toolbar a { color: var(--sl-color-accent-high); text-decoration: none; }
+  .word-status { padding: 1rem; border: 1px solid var(--sl-color-gray-5); color: var(--sl-color-gray-2); font-size: var(--sl-text-sm); }
+  .word-document { max-width: 100%; overflow-x: auto; }
+  .word-document :global([id^='search-paragraph-']) { scroll-margin-top: calc(var(--sl-nav-height) + 1rem); }
+  .word-document :global(.docx-page-wrapper) { padding: clamp(.5rem, 2vw, 1.5rem); background: var(--sl-color-gray-6); }
+  .word-document :global(.docx-page) { margin: 0 auto; box-shadow: 0 2px 8px #0002; }
+  .word-document :global(.docx-page p), .word-document :global(.docx-page span) { font-family: "Microsoft YaHei", "Noto Sans CJK SC", "PingFang SC", "Hiragino Sans GB", sans-serif; }
+  .word-document :global(.docx-page img) { max-width: 100%; height: auto; }
+  @media (min-width: 100rem) {
+    .word-layout:has(> :global(.attachment-rail)) { grid-template-columns: minmax(0, 1fr) minmax(11rem, 13rem); }
+    .word-layout > :global(.attachment-rail) { position: sticky; top: 5.5rem; }
+  }
+</style>

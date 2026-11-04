@@ -1,0 +1,44 @@
+---
+import { FileText, Images, BookOpen } from '@lucide/astro';
+import { loadTaxonomy, flattenLeaves } from '../../scripts/taxonomy.mjs';
+import type { TaxonomyNode } from '../../scripts/taxonomy.mjs';
+const taxonomy = loadTaxonomy();
+const { groupPath } = Astro.props;
+const parts = groupPath.split('/');
+let current: TaxonomyNode | undefined = { id: '', title: '', children: taxonomy.groups };
+for (const part of parts) current = current?.children?.find((item) => item.id === part);
+const children = current?.children ?? [];
+const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+const countFor = (node: TaxonomyNode): number => node.type ? 1 : flattenLeaves({ groups: [node] }).length;
+const iconFor = (node: TaxonomyNode) => node.type === 'gallery' ? Images : node.type === 'docx' ? BookOpen : FileText;
+---
+
+<section class="group-overview" aria-label={`${current?.title ?? ''} 笔记`}>
+  <p class="group-kicker">主题索引</p>
+  <div class="topic-list">
+    {children.map((child) => {
+      const childPath = [...parts, child.id];
+      const Icon = iconFor(child);
+      return (
+        <a class="topic-row" href={`${base}notes/${childPath.join('/')}/`}>
+          <Icon size={18} stroke-width={1.8} aria-hidden="true" />
+          <span class="topic-name">{child.title}</span>
+          <span class="topic-meta">{child.type ? (child.type === 'gallery' ? '图片集' : child.type === 'docx' ? 'Word' : 'Markdown') : `${countFor(child)} 个主题`}</span>
+          <span class="topic-arrow" aria-hidden="true">→</span>
+        </a>
+      );
+    })}
+  </div>
+</section>
+
+<style>
+  .group-kicker { margin: 0 0 .5rem; color: var(--sl-color-gray-2); font-size: var(--sl-text-xs); font-weight: 700; }
+  .topic-list { border-top: 1px solid var(--sl-color-gray-5); }
+  .topic-row { display: grid; grid-template-columns: 1.5rem minmax(0, 1fr) auto 1rem; align-items: center; gap: .8rem; min-height: 3.6rem; padding: .35rem .2rem; border-bottom: 1px solid var(--sl-color-gray-5); color: var(--sl-color-text); text-decoration: none; }
+  .topic-row > svg { color: var(--sl-color-accent); }
+  .topic-row:hover .topic-name { color: var(--sl-color-accent-high); }
+  .topic-name { font-weight: 600; }
+  .topic-meta { color: var(--sl-color-gray-3); font-size: var(--sl-text-xs); white-space: nowrap; }
+  .topic-arrow { color: var(--sl-color-gray-3); text-align: right; }
+  @media (max-width: 32rem) { .topic-row { grid-template-columns: 1.5rem minmax(0, 1fr) 1rem; } .topic-meta { display: none; } }
+</style>

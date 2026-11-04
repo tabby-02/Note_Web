@@ -1,0 +1,20 @@
+---
+import { Moon, Sun } from '@lucide/astro';
+---
+
+<button class="theme-toggle" type="button" aria-label="切换到暗色主题" title="切换到暗色主题">
+  <Sun class="light-icon" size={18} stroke-width={1.8} aria-hidden="true" />
+  <Moon class="dark-icon" size={18} stroke-width={1.8} aria-hidden="true" />
+</button>
+
+<script>
+  document.querySelectorAll<HTMLButtonElement>('.theme-toggle').forEach((button) => {
+    button.addEventListener('click', () => {
+      const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+      window.NotesThemeProvider?.set(next);
+      const label = next === 'dark' ? '切换到浅色主题' : '切换到暗色主题';
+      button.setAttribute('aria-label', label);
+      button.title = label;
+    });
+  });
+</script>

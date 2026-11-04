@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.astro/
+/src/content/docs/index.mdx
+/src/content/docs/notes/
+public/library/
+public/pdfjs/
+public/scoped-search/
+*.log
+.notes-manager/

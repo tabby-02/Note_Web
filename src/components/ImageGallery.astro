@@ -1,0 +1,166 @@
+---
+import path from 'node:path';
+import { inspectGallery } from '../lib/gallery.mjs';
+import { ChevronUp, ChevronDown, Maximize2, X } from '@lucide/astro';
+import AttachmentList from './AttachmentList.astro';
+import DirectoryToggle from './DirectoryToggle.astro';
+import DirectoryResize from './DirectoryResize.astro';
+
+const { leafPath } = Astro.props;
+const root = path.resolve(process.cwd(), 'notes', ...leafPath.split('/'), 'chapters');
+const siteBase = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+const base = `${siteBase}library/${leafPath}/chapters/`;
+let pageNumber = 0;
+const gallery = inspectGallery(root);
+if (gallery.issues.length) throw new Error(gallery.issues.join('\n'));
+const chapters = gallery.chapters.map((chapter, index) => ({
+    title: chapter.title,
+    id: `gallery-chapter-${index}`,
+    images: chapter.images.map(({ name, relative, width, height }) => ({ name, width, height, number: ++pageNumber, url: `${base}${relative.split('/').map(encodeURIComponent).join('/')}` })),
+  }));
+const totalImages = pageNumber;
+---
+
+<div class="gallery-layout" data-image-gallery data-gallery-total={totalImages}>
+  <nav class="note-outline" data-note-outline aria-label="图片章节">
+    <div class="directory-header">
+      <span class="directory-title">章节目录 <small>{chapters.length}</small></span>
+      <DirectoryToggle directory="outline" controls="note-page-outline" label="章节目录" />
+    </div>
+    <div class="directory-collapsed-label" aria-hidden="true">章节目录</div>
+    <div class="chapter-list outline-links directory-scroll" id="note-page-outline" tabindex="0" aria-label="图片章节，可独立滚动">
+      {chapters.map((chapter, index) => (
+        <a class:list={['chapter-button', index === 0 && 'is-active']} href={`#${chapter.id}`} data-chapter-index={index} aria-current={index === 0 ? 'location' : undefined} title={chapter.title}>
+          <span>{chapter.title}</span><small>{chapter.images.length}</small>
+        </a>
+      ))}
+    </div>
+    <DirectoryResize directory="outline" label="章节目录" />
+  </nav>
+
+  <div class="gallery-stream">
+    <p class="gallery-intro">{chapters.length} 个章节 · {totalImages} 页，向下滚动连续阅读，点击图片可放大。</p>
+    {chapters.map((chapter, chapterIndex) => (
+      <section class="gallery-chapter" id={chapter.id} data-gallery-chapter data-chapter-title={chapter.title}>
+        <header class="gallery-chapter-heading"><h2>{chapter.title}</h2><span>{chapter.images.length} 页</span></header>
+        <div class="gallery-pages">
+          {chapter.images.map((entry) => (
+            <figure class="gallery-page" id={`gallery-page-${entry.number}`} data-gallery-page data-chapter={chapterIndex}>
+              <button class="gallery-page-image" type="button" data-gallery-zoom data-gallery-url={entry.url} data-gallery-name={`${chapter.title} · 第 ${entry.number} 页`} aria-label={`放大查看 ${chapter.title} 第 ${entry.number} 页`}>
+                <img src={entry.url} alt={`${chapter.title} 第 ${entry.number} 页`} width={entry.width} height={entry.height} loading={entry.number === 1 ? 'eager' : 'lazy'} decoding="async" />
+                <span class="gallery-zoom-hint"><Maximize2 size={16} aria-hidden="true" /></span>
+              </button>
+              <figcaption><span>第 {entry.number} / {totalImages} 页</span><span title={entry.name}>{entry.name}</span></figcaption>
+            </figure>
+          ))}
+        </div>
+      </section>
+    ))}
+    <div class="gallery-progress" aria-label="图片页导航">
+      <button type="button" data-gallery-prev aria-label="上一页" title="上一页"><ChevronUp size={18} aria-hidden="true" /></button>
+      <span data-gallery-caption>{chapters[0]?.title}</span>
+      <span class="image-counter" data-gallery-counter>1 / {totalImages}</span>
+      <button type="button" data-gallery-next aria-label="下一页" title="下一页"><ChevronDown size={18} aria-hidden="true" /></button>
+    </div>
+  </div>
+  <AttachmentList leafPath={leafPath} />
+  <dialog class="image-lightbox" data-gallery-dialog aria-label="笔记图片放大预览" data-pagefind-ignore>
+    <button class="lightbox-close" type="button" data-gallery-close aria-label="关闭大图" title="关闭 (Esc)"><X size={19} aria-hidden="true" /></button>
+    <img data-gallery-large alt="" />
+  </dialog>
+</div>
+
+<script>
+  document.querySelectorAll<HTMLElement>('[data-image-gallery]').forEach((root) => {
+    const pages = [...root.querySelectorAll<HTMLElement>('[data-gallery-page]')];
+    const links = [...root.querySelectorAll<HTMLAnchorElement>('[data-chapter-index]')];
+    const chapters = [...root.querySelectorAll<HTMLElement>('[data-gallery-chapter]')];
+    const caption = root.querySelector<HTMLElement>('[data-gallery-caption]');
+    const counter = root.querySelector<HTMLElement>('[data-gallery-counter]');
+    const previous = root.querySelector<HTMLButtonElement>('[data-gallery-prev]');
+    const next = root.querySelector<HTMLButtonElement>('[data-gallery-next]');
+    const dialog = root.querySelector<HTMLDialogElement>('[data-gallery-dialog]');
+    const large = root.querySelector<HTMLImageElement>('[data-gallery-large]');
+    let current = 0;
+    let scheduled = false;
+    const update = () => {
+      scheduled = false;
+      const offset = (document.querySelector('.header')?.getBoundingClientRect().bottom ?? 64) + 60;
+      current = 0;
+      for (let index = 0; index < pages.length; index++) {
+        if (pages[index].getBoundingClientRect().top > offset) break;
+        current = index;
+      }
+      let chapter = 0;
+      chapters.forEach((section, index) => { if (section.getBoundingClientRect().top <= offset) chapter = index; });
+      const firstInChapter = pages.findIndex((page) => Number(page.dataset.chapter) === chapter);
+      current = Math.max(current, firstInChapter);
+      links.forEach((link, index) => {
+        link.classList.toggle('is-active', index === chapter);
+        if (index === chapter) link.setAttribute('aria-current', 'location');
+        else link.removeAttribute('aria-current');
+      });
+      if (counter) counter.textContent = `${current + 1} / ${pages.length}`;
+      if (caption) caption.textContent = chapters[chapter]?.dataset.chapterTitle ?? '';
+      if (previous) previous.disabled = current === 0;
+      if (next) next.disabled = current === pages.length - 1;
+    };
+    const move = (step: number) => pages[Math.max(0, Math.min(pages.length - 1, current + step))]?.scrollIntoView({ block: 'start' });
+    previous?.addEventListener('click', () => move(-1));
+    next?.addEventListener('click', () => move(1));
+    root.querySelectorAll<HTMLButtonElement>('[data-gallery-zoom]').forEach((button) => {
+      button.addEventListener('click', () => {
+        if (!large || !dialog) return;
+        large.src = button.dataset.galleryUrl ?? '';
+        large.alt = button.dataset.galleryName ?? '';
+        dialog.showModal();
+      });
+    });
+    root.querySelector('[data-gallery-close]')?.addEventListener('click', () => dialog?.close());
+    dialog?.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
+    dialog?.addEventListener('close', () => large?.removeAttribute('src'));
+    window.addEventListener('scroll', () => { if (!scheduled) { scheduled = true; requestAnimationFrame(update); } }, { passive: true });
+    new ResizeObserver(update).observe(root);
+    update();
+  });
+</script>
+
+<style>
+  .gallery-layout { max-width: 78rem; margin: 0 auto; }
+  .chapter-list { display: grid; align-content: start; gap: .2rem; }
+  .chapter-list .chapter-button { --outline-depth: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .45rem; align-items: center; min-height: 2.4rem; margin: 0; padding: .5rem .6rem; border: 0; border-radius: 5px; color: var(--sl-color-text); text-decoration: none; }
+  .chapter-button span { overflow: hidden; font-size: .8rem; text-overflow: ellipsis; white-space: nowrap; }
+  .chapter-button small { color: var(--sl-color-gray-3); font-size: .68rem; }
+  .chapter-button:hover { background: var(--sl-color-gray-6); }
+  .chapter-list .chapter-button.is-active { background: var(--sl-color-accent-low); color: var(--sl-color-accent-high); font-weight: 700; }
+  .gallery-stream { min-width: 0; }
+  .gallery-intro { margin: 0 0 1.5rem; color: var(--sl-color-gray-3); font-size: .82rem; }
+  .gallery-chapter { margin: 0 0 2.5rem; scroll-margin-top: 1rem; }
+  .gallery-chapter-heading { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1rem; border-bottom: 1px solid var(--sl-color-gray-5); }
+  .gallery-chapter-heading h2 { margin: 0; border: 0; padding: 0 0 .5rem; font-size: 1.3rem; }
+  .gallery-chapter-heading > span { color: var(--sl-color-gray-3); font-size: .75rem; white-space: nowrap; }
+  .gallery-pages { display: grid; gap: 1.25rem; max-width: 62rem; margin: 0 auto; }
+  .gallery-page { min-width: 0; margin: 0; overflow: hidden; border: 1px solid var(--sl-color-gray-5); border-radius: 7px; background: var(--sl-color-bg-nav); scroll-margin-top: 1rem; }
+  .gallery-page-image { position: relative; display: grid; width: 100%; place-items: center; margin: 0; padding: 0; border: 0; background: #fff; cursor: zoom-in; }
+  .gallery-page-image > img { display: block; max-width: 100%; height: auto; margin: 0; }
+  .gallery-zoom-hint { position: absolute; right: .6rem; top: .6rem; display: grid; place-items: center; width: 2rem; height: 2rem; border: 1px solid var(--sl-color-gray-5); border-radius: 5px; background: var(--sl-color-bg-nav); color: var(--sl-color-gray-2); opacity: .7; }
+  .gallery-page-image:hover .gallery-zoom-hint { opacity: 1; }
+  .gallery-page figcaption { display: flex; gap: .75rem; align-items: center; justify-content: space-between; margin: 0; padding: .55rem .8rem; border-top: 1px solid var(--sl-color-gray-5); color: var(--sl-color-gray-3); font-size: .7rem; }
+  .gallery-page figcaption > span:first-child { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+  .gallery-page figcaption > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gallery-progress { position: sticky; bottom: 1rem; display: flex; width: fit-content; max-width: 100%; align-items: center; gap: .9rem; margin: 1rem auto; padding: .35rem .5rem; border: 1px solid var(--sl-color-gray-5); border-radius: 8px; background: var(--sl-color-bg-nav); box-shadow: 0 3px 15px #0001; }
+  .gallery-progress > span { color: var(--sl-color-gray-2); font-size: .75rem; white-space: nowrap; }
+  .gallery-progress [data-gallery-caption] { overflow: hidden; text-overflow: ellipsis; }
+  .image-counter { font-variant-numeric: tabular-nums; }
+  .gallery-progress button, .lightbox-close { display: grid; flex: 0 0 auto; width: 2rem; height: 2rem; place-items: center; padding: 0; border: 0; border-radius: 4px; color: var(--sl-color-text); background: var(--sl-color-gray-6); cursor: pointer; }
+  .gallery-progress button:disabled { opacity: .3; cursor: default; }
+  .image-lightbox { width: min(96vw, 90rem); max-width: none; height: 94dvh; max-height: none; padding: 2.75rem 1rem 1rem; border: 0; background: #111a17; }
+  .image-lightbox::backdrop { background: #08100de8; }
+  .image-lightbox > img { display: block; width: 100%; height: 100%; object-fit: contain; }
+  .lightbox-close { position: absolute; top: .55rem; right: .55rem; }
+  .gallery-layout > :global(.attachment-rail) { margin-top: 1.5rem; }
+  @media (max-width: 49.99rem) {
+    .gallery-progress { gap: .5rem; bottom: .5rem; }
+    .gallery-page figcaption > span:last-child { display: none; }
+  }
+</style>

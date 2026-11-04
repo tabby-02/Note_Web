@@ -1,0 +1,51 @@
+---
+import { ChevronDown, Download, Folder } from '@lucide/astro';
+interface FileEntry { relative: string; extension: string; href: string; Icon: any }
+interface Node { name: string; path: string; files: FileEntry[]; children: Node[] }
+interface Props { node: Node; depth: number }
+const { node, depth } = Astro.props;
+const countFiles = (item: Node): number => item.files.length + item.children.reduce((sum, child) => sum + countFiles(child), 0);
+---
+{node.children.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true })).map((child) => (
+  <li class="attachment-folder-item">
+    <details class="attachment-folder" data-attachment-folder data-folder-path={child.path} open={depth === 0}>
+      <summary><Folder size={14} aria-hidden="true" /><span>{child.name}</span><small>{countFiles(child)}</small><ChevronDown class="attachment-folder-caret" size={14} aria-hidden="true" /></summary>
+      <ul class="attachment-tree"><Astro.self node={child} depth={depth + 1} /></ul>
+    </details>
+  </li>
+))}
+{node.files.sort((a, b) => a.relative.localeCompare(b.relative, 'zh-CN', { numeric: true })).map(({ relative, Icon, href }) => (
+  <li class="attachment-file-item">
+    <div class="attachment-row">
+      <button type="button" data-attachment-open data-attachment-url={href} data-attachment-name={relative} title={`预览 ${relative}`}><Icon size={14} stroke-width={1.8} aria-hidden="true" /><span>{relative.split('/').at(-1)}</span></button>
+      <a class="download-link" href={href} download aria-label={`下载 ${relative}`} title="下载"><Download size={13} aria-hidden="true" /></a>
+    </div>
+  </li>
+))}
+
+<script>
+  document.querySelectorAll<HTMLDetailsElement>('[data-attachment-folder]').forEach((folder) => {
+    const key = `notes-attachment-folder:${folder.dataset.folderPath}`;
+    try {
+      const saved = localStorage.getItem(key);
+      if (saved !== null) folder.open = saved === 'true';
+      else folder.open = folder.dataset.folderPath?.split('/').length === 1;
+    } catch {}
+    folder.addEventListener('toggle', () => { try { localStorage.setItem(key, String(folder.open)); } catch {} });
+  });
+</script>
+
+<style>
+  .attachment-tree { max-height: none; padding: 0; overflow: visible; }
+  .attachment-folder-item, .attachment-file-item { min-width: 0; margin: 0; padding: 0; list-style: none; }
+  .attachment-folder { margin: 0; }
+  .attachment-folder > summary { display: flex; align-items: center; gap: .4rem; min-width: 0; min-height: 2rem; padding: .3rem .3rem; border-radius: 4px; color: var(--sl-color-gray-2); font-size: .74rem; font-weight: 550; cursor: pointer; list-style: none; }
+  .attachment-folder > summary::-webkit-details-marker { display: none; }
+  .attachment-folder > summary > svg:first-child { flex: 0 0 auto; color: var(--sl-color-accent); }
+  .attachment-folder > summary > span { min-width: 0; overflow-wrap: anywhere; }
+  .attachment-folder > summary > small { margin-left: auto; color: var(--sl-color-gray-3); font-size: .65rem; }
+  .attachment-folder > summary:hover { color: var(--sl-color-accent-high); background: var(--sl-color-gray-6); }
+  .attachment-folder-caret { flex: 0 0 auto; color: var(--sl-color-gray-3); transform: rotate(-90deg); }
+  .attachment-folder[open] > summary .attachment-folder-caret { transform: none; }
+  .attachment-folder > .attachment-tree { max-height: none; padding-left: .55rem; border-left: 1px solid var(--sl-color-gray-5); margin-left: .35rem; overflow: visible; }
+</style>

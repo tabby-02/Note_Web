@@ -1,0 +1,50 @@
+---
+import DefaultSidebar from '@astrojs/starlight/components/Sidebar.astro';
+import DirectoryToggle from './DirectoryToggle.astro';
+import DirectoryResize from './DirectoryResize.astro';
+---
+
+<div class="topic-directory">
+  <div class="directory-header">
+    <span class="directory-title">知识目录</span>
+    <DirectoryToggle directory="topic" controls="note-topic-tree" label="知识目录" />
+  </div>
+  <div class="directory-collapsed-label" aria-hidden="true">知识目录</div>
+  <div class="topic-tree directory-scroll" id="note-topic-tree" tabindex="0" aria-label="知识目录，可独立滚动">
+    <DefaultSidebar />
+  </div>
+  <DirectoryResize directory="topic" label="知识目录" />
+</div>
+
+<script is:inline>
+  (() => {
+    const tree = document.getElementById('note-topic-tree');
+    const hash = tree?.querySelector('sl-sidebar-state-persist')?.dataset.hash;
+    if (!tree || !hash) return;
+    const storageKey = 'notes-topic-scroll';
+    let pendingScroll = null;
+    let ready = document.readyState !== 'loading';
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(storageKey) || 'null');
+      if (saved?.hash === hash && Number.isFinite(saved.scroll) && saved.scroll >= 0) pendingScroll = saved.scroll;
+    } catch {}
+    const restore = () => {
+      if (!ready || pendingScroll === null || tree.clientHeight === 0) return;
+      tree.scrollTop = pendingScroll;
+      pendingScroll = null;
+    };
+    const save = () => {
+      // A closed directory/menu has no measurable scroll position to save.
+      if (!ready || pendingScroll !== null || tree.clientHeight === 0) return;
+      try { sessionStorage.setItem(storageKey, JSON.stringify({ hash, scroll: tree.scrollTop })); } catch {}
+    };
+    // Wait for the menu custom element to upgrade and its scroll area to be sized.
+    if (ready) restore();
+    else document.addEventListener('DOMContentLoaded', () => { ready = true; restore(); }, { once: true });
+    tree.addEventListener('scroll', save, { passive: true });
+    tree.addEventListener('click', save);
+    window.addEventListener('pagehide', save);
+    tree.closest('sl-sidebar-pane')?.addEventListener('toggle', restore);
+    new ResizeObserver(restore).observe(tree);
+  })();
+</script>

@@ -1,0 +1,200 @@
+---
+import { Download, X } from '@lucide/astro';
+---
+<dialog class="attachment-dialog" data-attachment-dialog aria-labelledby="attachment-preview-title" data-pagefind-ignore>
+  <header class="attachment-dialog-header">
+    <h2 id="attachment-preview-title" data-attachment-title>文件预览</h2>
+    <a class="preview-download" data-attachment-download download><Download size={16} aria-hidden="true" /> 下载</a>
+    <button type="button" class="preview-close" data-attachment-close aria-label="关闭文件预览" title="关闭 (Esc)"><X size={20} aria-hidden="true" /></button>
+  </header>
+  <div class="attachment-dialog-content" data-attachment-content aria-live="polite"></div>
+</dialog>
+
+<script>
+  const dialog = document.querySelector<HTMLDialogElement>('[data-attachment-dialog]');
+  const content = dialog?.querySelector<HTMLElement>('[data-attachment-content]');
+  const title = dialog?.querySelector<HTMLElement>('[data-attachment-title]');
+  const download = dialog?.querySelector<HTMLAnchorElement>('[data-attachment-download]');
+  let request: AbortController | null = null;
+  let opener: HTMLElement | null = null;
+  const imageTypes = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'avif', 'bmp']);
+  const textTypes = new Set(['', 'txt', 'md', 'csv', 'json', 'xml', 'yml', 'yaml', 'js', 'ts', 'html', 'css', 'sql', 'py', 'java', 'cpp', 'c', 'h', 'hpp', 'sh', 'ini', 'log', 'properties']);
+  const showFile = async (trigger: HTMLElement) => {
+    if (!dialog || !content || !title || !download) return;
+    request?.abort();
+    const controller = new AbortController();
+    request = controller;
+    opener = trigger;
+    const url = trigger.dataset.attachmentUrl ?? trigger.getAttribute('href') ?? '';
+    const name = trigger.dataset.attachmentName ?? decodeURIComponent(url.split('/').at(-1) ?? '文件预览');
+    const extension = name.includes('.') ? name.split('.').at(-1)!.toLowerCase() : '';
+    title.textContent = name;
+    download.href = url;
+    download.download = name.split('/').at(-1) ?? name;
+    const view = document.createElement('div');
+    view.className = 'attachment-view';
+    content.replaceChildren(view);
+    if (!dialog.open) dialog.showModal();
+    if (imageTypes.has(extension)) {
+      view.classList.add('attachment-image-view');
+      const image = document.createElement('img');
+      image.src = url; image.alt = name;
+      view.append(image);
+      return;
+    }
+    if (extension === 'pdf') {
+      view.classList.add('attachment-pdf-view');
+      view.textContent = '正在载入 PDF…';
+      try {
+        const { renderPdfPreview } = await import('../lib/pdf-preview');
+        if (!controller.signal.aborted) await renderPdfPreview(url, view, content, controller.signal);
+      } catch {
+        if (!controller.signal.aborted) view.textContent = 'PDF 预览加载失败，请下载原文件查看。';
+      }
+      return;
+    }
+    if (['mp4', 'webm', 'ogg', 'mp3', 'wav', 'm4a'].includes(extension)) {
+      const media = document.createElement(['mp3', 'wav', 'm4a'].includes(extension) ? 'audio' : 'video');
+      media.controls = true; media.src = url; view.append(media); return;
+    }
+    if (!textTypes.has(extension) && extension !== 'docx') {
+      view.classList.add('attachment-message');
+      view.textContent = '此格式暂不支持在线预览，可点击右上角下载查看。';
+      return;
+    }
+    view.textContent = '正在载入…';
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const buffer = await response.arrayBuffer();
+      if (controller.signal.aborted) return;
+      view.replaceChildren();
+      if (extension === 'docx') {
+        const { renderAsync } = await import('docx-preview');
+        if (controller.signal.aborted) return;
+        view.classList.add('attachment-docx-view');
+        await renderAsync(buffer, view, view, { className: 'attachment-docx', inWrapper: true, renderHeaders: true, renderFooters: true });
+      } else {
+        let text: string;
+        const bytes = new Uint8Array(buffer);
+        if (bytes[0] === 0xff && bytes[1] === 0xfe) text = new TextDecoder('utf-16le').decode(bytes);
+        else if (bytes[0] === 0xfe && bytes[1] === 0xff) text = new TextDecoder('utf-16be').decode(bytes);
+        else {
+          try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+          catch { text = new TextDecoder('gb18030').decode(bytes); }
+        }
+        const pre = document.createElement('pre');
+        pre.textContent = text;
+        view.classList.add('attachment-text-view');
+        view.append(pre);
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        view.classList.add('attachment-message');
+        view.textContent = '文件预览加载失败，请下载文件查看。';
+      }
+    }
+  };
+  document.querySelectorAll<HTMLElement>('[data-attachment-open]').forEach((trigger) => {
+    trigger.addEventListener('click', (event) => { event.preventDefault(); void showFile(trigger); });
+  });
+  dialog?.querySelector('[data-attachment-close]')?.addEventListener('click', () => dialog.close());
+  dialog?.addEventListener('click', (event) => {
+    const rect = dialog.getBoundingClientRect();
+    if (event.target === dialog && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom)) dialog.close();
+  });
+  dialog?.addEventListener('close', () => { request?.abort(); content?.replaceChildren(); opener?.focus({ preventScroll: true }); });
+  document.querySelectorAll<HTMLElement>('[data-attachment-dock]').forEach((dock) => {
+    // Keep the fixed drawer outside content stacking contexts created by note markup.
+    document.body.append(dock);
+    const panel = dock.querySelector<HTMLElement>('[data-attachment-dock-panel]') ?? dock.querySelector<HTMLElement>('.attachment-rail');
+    const toggle = dock.querySelector<HTMLButtonElement>('[data-attachment-dock-toggle]');
+    const close = dock.querySelector<HTMLButtonElement>('[data-attachment-dock-close]');
+    const setOpen = (open: boolean) => {
+      dock.dataset.open = String(open);
+      toggle?.setAttribute('aria-expanded', String(open));
+      toggle?.setAttribute('aria-label', `${open ? '向右收起' : '展开'}辅助文件，共${toggle.dataset.attachmentCount ?? 0}项`);
+      toggle!.title = open ? '向右收起辅助文件' : '展开辅助文件';
+      panel?.toggleAttribute('inert', !open);
+    };
+    setOpen(false);
+    toggle?.addEventListener('click', () => setOpen(dock.dataset.open !== 'true'));
+    close?.addEventListener('click', () => { setOpen(false); toggle?.focus({ preventScroll: true }); });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && dock.dataset.open === 'true' && !document.querySelector('dialog[open]')) setOpen(false);
+    });
+    document.addEventListener('pointerdown', (event) => {
+      if (document.querySelector('dialog[open]')) return;
+      if (dock.dataset.open === 'true' && !dock.contains(event.target as Node) && !(event.target as Element).closest('[data-attachment-open]')) setOpen(false);
+    });
+  });
+</script>
+
+<style is:global>
+  :root:has(:is(.attachment-dialog, .image-lightbox)[open]) { overflow: hidden; }
+  .attachment-dock { position: fixed; z-index: 1000; inset-block: calc(var(--sl-nav-height) + .75rem) 1rem; inset-inline-end: 0; width: var(--notes-attachments-size); pointer-events: none; }
+  .attachment-dock-handle { position: absolute; z-index: 2; inset-block-start: .5rem; inset-inline-end: 0; display: flex; flex-direction: column; align-items: center; gap: .55rem; width: 2.7rem; min-height: 8rem; padding: .7rem .35rem; border: 1px solid var(--sl-color-gray-5); border-right: 0; border-radius: 9px 0 0 9px; background: var(--sl-color-bg-nav); color: var(--sl-color-gray-2); box-shadow: 0 3px 14px #0002; cursor: pointer; pointer-events: auto; writing-mode: vertical-rl; }
+  .attachment-dock-handle:hover { color: var(--sl-color-accent-high); background: var(--sl-color-accent-low); }
+  .attachment-dock-handle span { font: 700 .75rem var(--sl-font); letter-spacing: .08em; }
+  .attachment-dock-handle b { display: inline-grid; min-width: 1.25rem; min-height: 1.25rem; place-items: center; border-radius: 50%; background: var(--sl-color-gray-6); font: 600 .65rem var(--sl-font); writing-mode: horizontal-tb; }
+  .dock-caret { transform: rotate(90deg); }
+  .attachment-dock[data-open='true'] .attachment-dock-handle { inset-inline-end: var(--notes-attachments-size); flex-direction: row; width: 2.5rem; min-height: 2.5rem; padding: .4rem; border-right: 1px solid var(--sl-color-gray-5); border-radius: 7px 0 0 7px; writing-mode: horizontal-tb; }
+  .attachment-dock[data-open='true'] .attachment-dock-handle span,
+  .attachment-dock[data-open='true'] .attachment-dock-handle b { display: none; }
+  .attachment-dock[data-open='true'] .attachment-dock-handle .dock-caret { transform: rotate(-90deg); }
+  .attachment-dock .attachment-rail { position: absolute; z-index: 1; inset-block: 0; inset-inline-end: 0; display: flex; flex-direction: column; width: var(--notes-attachments-size); margin: 0; border: 1px solid var(--sl-color-gray-5); border-right: 0; border-radius: 9px 0 0 9px; background: var(--sl-color-bg); box-shadow: 0 6px 30px #0003; overflow: hidden; pointer-events: auto; transform: translateX(102%); visibility: hidden; transition: transform .2s ease, visibility .2s; }
+  .attachment-dock[data-open='true'] .attachment-rail { transform: translateX(0); visibility: visible; }
+  .attachment-panel-header { display: flex; flex: 0 0 auto; align-items: center; gap: .55rem; min-height: 3.35rem; padding: .5rem .8rem; border-bottom: 1px solid var(--sl-color-gray-5); }
+  .attachment-panel-header > span { color: var(--sl-color-gray-1); font-size: .82rem; font-weight: 750; }
+  .attachment-panel-header > small { flex: 1; color: var(--sl-color-gray-3); font-size: .62rem; text-align: right; }
+  .attachment-panel-header > button { display: grid; width: 1.8rem; height: 1.8rem; flex: 0 0 auto; place-items: center; padding: 0; border: 1px solid var(--sl-color-gray-5); border-radius: 5px; background: var(--sl-color-gray-6); color: var(--sl-color-gray-2); cursor: pointer; }
+  .attachment-dock .attachment-rail > details { display: flex; flex: 1; min-height: 0; flex-direction: column; margin: 0; overflow: hidden; }
+  .attachment-tree { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; margin: 0; padding: 0; list-style: none; }
+  .attachment-rail details > summary { display: flex; align-items: center; gap: .45rem; padding: .65rem .75rem; color: var(--sl-color-gray-2); font-size: .75rem; font-weight: 650; cursor: pointer; list-style: none; }
+  .attachment-rail summary::-webkit-details-marker { display: none; }
+  .attachment-rail summary > span { display: inline-grid; min-width: 1.25rem; height: 1.25rem; place-items: center; border-radius: 999px; background: var(--sl-color-gray-6); color: var(--sl-color-text); font-size: .66rem; }
+  .attachment-caret { flex: 0 0 auto; margin-left: auto; color: var(--sl-color-gray-3); transform: rotate(-90deg); }
+  .attachment-rail details[open] > summary .attachment-caret { transform: none; }
+  .attachment-dock .attachment-rail > details > summary { flex: 0 0 auto; min-height: 2.5rem; padding: .5rem .75rem; border-bottom: 1px solid var(--sl-color-gray-6); font-size: .74rem; }
+  .attachment-dock .attachment-rail > details > .attachment-tree { flex: 1; max-height: none; padding: .4rem .6rem 1rem; overflow: auto; overscroll-behavior: contain; }
+  .attachment-tree { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; margin: 0; list-style: none; }
+  .attachment-tree > li { min-width: 0; padding: 0; margin: 0; list-style: none; }
+  .attachment-tree .attachment-row { display: grid; grid-template-columns: minmax(0, 1fr) 1.8rem; align-items: center; gap: .2rem; border-bottom: 1px solid var(--sl-color-gray-6); }
+  .attachment-tree [data-attachment-open], .attachment-tree .download-link { display: flex; min-width: 0; align-items: center; gap: .4rem; padding: .3rem .25rem; border: 0; border-radius: 4px; background: transparent; color: var(--sl-color-text); font: .74rem/1.55 var(--sl-font); text-decoration: none; text-align: left; cursor: pointer; }
+  .attachment-tree [data-attachment-open] > svg { flex: 0 0 auto; color: var(--sl-color-accent); }
+  .attachment-tree [data-attachment-open] > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .attachment-tree [data-attachment-open]:hover, .attachment-tree .download-link:hover { color: var(--sl-color-accent-high); background: var(--sl-color-gray-6); }
+  .attachment-tree .download-link { justify-content: center; color: var(--sl-color-gray-3); }
+  .attachment-dialog { width: min(92vw, 76rem); height: min(88dvh, 56rem); max-width: none; max-height: none; padding: 0; margin: auto; border: 1px solid var(--sl-color-gray-5); border-radius: 10px; background: var(--sl-color-bg); color: var(--sl-color-text); box-shadow: 0 20px 80px #0004; }
+  .attachment-dialog[open] { display: flex; flex-direction: column; }
+  .attachment-dialog::backdrop { background: #0a171166; backdrop-filter: blur(3px); }
+  .attachment-dialog-header { display: flex; flex: 0 0 auto; align-items: center; gap: 1rem; padding: .7rem 1rem; border-bottom: 1px solid var(--sl-color-gray-5); background: var(--sl-color-bg-nav); }
+  .attachment-dialog-header h2 { flex: 1; min-width: 0; padding: 0; margin: 0; border: 0; font-size: .95rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .preview-download { display: inline-flex; align-items: center; gap: .35rem; color: var(--sl-color-accent-high); font-size: .8rem; text-decoration: none; white-space: nowrap; }
+  .preview-close { display: grid; width: 2.2rem; height: 2.2rem; place-items: center; padding: 0; border: 0; border-radius: 5px; color: var(--sl-color-gray-2); background: var(--sl-color-gray-6); cursor: pointer; }
+  .preview-close:hover { background: var(--sl-color-accent-low); }
+  .attachment-dialog-content { flex: 1; min-height: 0; margin: 0; overflow: auto; overscroll-behavior: contain; }
+  .attachment-view { height: 100%; margin: 0; }
+  .attachment-image-view { display: grid; place-items: center; padding: 1rem; }
+  .attachment-image-view img { display: block; max-width: 100%; max-height: calc(88dvh - 6rem); width: auto; height: auto; object-fit: contain; }
+  .attachment-pdf-view { height: auto; min-height: 100%; padding: 1rem; background: var(--sl-color-gray-6); }
+  .pdf-document-summary { margin: 0 auto 1rem; max-width: 60rem; color: var(--sl-color-gray-3); font-size: .78rem; }
+  .pdf-sheet { max-width: 60rem; margin: 0 auto 1.2rem; overflow: hidden; border: 1px solid var(--sl-color-gray-5); border-radius: 5px; background: #fff; }
+  .pdf-page { display: grid; place-items: center; margin: 0; color: #65736a; font-size: .8rem; }
+  .pdf-page canvas { display: block; width: 100%; height: auto; margin: 0; }
+  .pdf-sheet figcaption { margin: 0; padding: .4rem .7rem; border-top: 1px solid var(--sl-color-gray-5); background: var(--sl-color-bg-nav); color: var(--sl-color-gray-3); font-size: .7rem; }
+  .attachment-text-view pre { min-height: 100%; padding: 1.3rem; margin: 0; border: 0; border-radius: 0; background: var(--note-code-bg); color: var(--note-code-fg); font: .85rem/1.75 var(--sl-font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .attachment-message { display: grid; place-items: center; padding: 2rem; color: var(--sl-color-gray-3); font-size: .9rem; }
+  .attachment-view :is(video, audio) { display: block; max-width: 100%; max-height: 100%; margin: auto; }
+  .attachment-docx-view { height: auto; min-height: 100%; overflow: auto; }
+  .attachment-docx-view .attachment-docx-wrapper { padding: 1rem; background: var(--sl-color-gray-6); }
+  @media (max-width: 49.99rem) {
+    .attachment-dialog { width: 96vw; height: 92dvh; }
+    .attachment-dialog-header { gap: .5rem; padding-inline: .65rem; }
+    .attachment-dock { --notes-attachments-size: min(88vw, 21rem); inset-block-start: auto; inset-block-end: 1rem; height: auto; width: var(--notes-attachments-size); }
+    .attachment-dock-handle { inset-block-start: auto; inset-block-end: 1rem; min-height: 6.5rem; }
+    .attachment-dock .attachment-rail { inset-block-start: auto; inset-block-end: 0; height: min(72dvh, 38rem); }
+    .attachment-dock[data-open='true'] .attachment-dock-handle { inset-block-start: auto; inset-block-end: 0; }
+    .attachment-dock[data-open='true'] .attachment-rail { transform: translateX(0); }
+  }
+</style>

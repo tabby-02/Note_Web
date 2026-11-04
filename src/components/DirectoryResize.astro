@@ -1,0 +1,74 @@
+---
+interface Props { directory: 'topic' | 'outline'; label: string }
+const { directory, label } = Astro.props;
+---
+<div class="directory-resize" data-directory-resize={directory} role="separator" tabindex="0" aria-orientation="vertical" aria-label={`调整${label}宽度`} aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" title="拖动调整宽度，双击恢复默认；方向键微调" />
+
+<script>
+  const root = document.documentElement;
+  document.querySelectorAll<HTMLElement>('[data-directory-resize]').forEach((handle) => {
+    const directory = handle.dataset.directoryResize as 'topic' | 'outline';
+    const pane = (directory === 'topic' ? handle.closest<HTMLElement>('.sidebar-pane') : handle.parentElement)!;
+    const property = `--notes-${directory}-size`;
+    const storageKey = `notes-${directory}-width`;
+    const limits = () => {
+      const rem = parseFloat(getComputedStyle(root).fontSize);
+      return directory === 'topic'
+        ? { min: 10.5 * rem, max: Math.min(24 * rem, innerWidth * .42 - 8 * rem) }
+        : { min: 12.5 * rem, max: Math.min(30 * rem, innerWidth * .58 - 12 * rem) };
+    };
+    const sync = () => {
+      const { min, max } = limits();
+      const width = Math.round(pane.getBoundingClientRect().width);
+      handle.setAttribute('aria-valuemin', String(Math.round(min)));
+      handle.setAttribute('aria-valuemax', String(Math.max(min, Math.round(max))));
+      handle.setAttribute('aria-valuenow', String(width));
+      handle.setAttribute('aria-valuetext', `${width} 像素`);
+    };
+    const setWidth = (width: number, persist = false) => {
+      const { min, max } = limits();
+      const value = Math.round(Math.max(min, Math.min(max, width)));
+      root.style.setProperty(property, `${value}px`);
+      if (persist) { try { localStorage.setItem(storageKey, String(value)); } catch {} }
+      sync();
+    };
+    let drag: { x: number; width: number; previous: string; pointer: number } | null = null;
+    const finish = (cancelled = false) => {
+      if (!drag) return;
+      if (cancelled) {
+        if (drag.previous) root.style.setProperty(property, drag.previous);
+        else root.style.removeProperty(property);
+      } else setWidth(pane.getBoundingClientRect().width, true);
+      const pointer = drag.pointer;
+      drag = null;
+      root.removeAttribute('data-directory-resizing');
+      if (handle.hasPointerCapture(pointer)) handle.releasePointerCapture(pointer);
+      sync();
+    };
+    handle.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      handle.focus();
+      drag = { x: event.clientX, width: pane.getBoundingClientRect().width, previous: root.style.getPropertyValue(property), pointer: event.pointerId };
+      handle.setPointerCapture(event.pointerId);
+      root.setAttribute('data-directory-resizing', directory);
+    });
+    handle.addEventListener('pointermove', (event) => { if (drag) setWidth(drag.width + event.clientX - drag.x); });
+    handle.addEventListener('pointerup', () => finish());
+    handle.addEventListener('pointercancel', () => finish(true));
+    handle.addEventListener('lostpointercapture', () => finish(true));
+    handle.addEventListener('keydown', (event) => {
+      const { min, max } = limits();
+      const width = pane.getBoundingClientRect().width;
+      const next = event.key === 'ArrowLeft' ? width - 16 : event.key === 'ArrowRight' ? width + 16 : event.key === 'Home' ? min : event.key === 'End' ? max : null;
+      if (next !== null) { event.preventDefault(); setWidth(next, true); }
+    });
+    handle.addEventListener('dblclick', () => {
+      root.style.removeProperty(property);
+      try { localStorage.removeItem(storageKey); } catch {}
+      sync();
+    });
+    new ResizeObserver(sync).observe(pane);
+    sync();
+  });
+</script>

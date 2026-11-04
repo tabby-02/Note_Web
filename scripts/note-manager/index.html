@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="notes-token" content="__MANAGER_TOKEN__">
+  <title>笔记管理 · 个人学习笔记</title>
+  <link rel="stylesheet" href="/style.css"><script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="app-header"><a class="brand" href="/">书页 <span>笔记管理</span></a><span class="local-badge">本机工作区</span><a href="http://127.0.0.1:4321/" target="_blank" rel="noreferrer">打开阅读网站 ↗</a></header>
+  <main>
+    <div class="intro"><p class="eyebrow">PERSONAL LIBRARY</p><h1>让每份笔记，各得其所。</h1><p>导入资料，整理知识分类，再回到阅读。</p></div>
+    <nav class="tabs" aria-label="管理功能"><button data-tab="library" aria-selected="true">知识库 <span id="note-count">…</span></button><button data-tab="import" aria-selected="false">导入笔记</button><button data-tab="trash" aria-selected="false">回收站 <span id="trash-count">0</span></button></nav>
+    <div id="notice" role="status" aria-live="polite" hidden></div>
+    <section id="panel-library" class="panel">
+      <div class="section-heading"><div><h2>知识目录</h2><p>选择条目后，可重命名、移动分类或移入回收站。</p></div><div class="actions"><button id="validate">检查笔记</button><button class="primary" id="new-category">＋ 新建分类</button></div></div>
+      <label class="search"><span>⌕</span><input id="filter" type="search" placeholder="查找笔记或分类…" aria-label="查找笔记或分类"></label>
+      <div id="library-tree" class="library-tree"></div>
+    </section>
+    <section id="panel-import" class="panel" hidden>
+      <div class="section-heading"><div><h2>导入一份笔记</h2><p>复制到知识库中，自动整理图片和辅助资料。原文件保持不变。</p></div><span class="step-label">文件夹 → 内容识别 → 知识分类</span></div>
+      <form id="import-form">
+        <div class="source-box"><label for="source">笔记文件夹</label><div class="source-input"><input id="source" required placeholder="例如 H:\学习资料\深度学习"><button type="button" id="pick-folder">选择文件夹</button><button type="button" id="analyze">识别内容</button></div><small>选择包含主笔记及其图片的文件夹；也可以直接粘贴完整路径。</small><div id="folder-picker-status" class="folder-picker-status" hidden><span role="status">正在等待选择文件夹。若未看到窗口，可取消后重试或直接填写路径。</span><button type="button" id="cancel-folder-picker" data-allow-busy>取消选择</button></div></div>
+        <div id="import-fields" hidden>
+          <div class="form-grid"><label>笔记名称<input id="import-title" required maxlength="160"></label><label>知识分类<select id="import-parent" required></select></label><label>内容类型<select id="import-type"><option value="markdown">Markdown 笔记</option><option value="docx">Word 文档</option><option value="gallery">图片集</option></select></label><label id="main-field">主文件<select id="import-main"></select></label></div>
+          <details class="advanced"><summary>页面地址</summary><label>目录标识<input id="import-id" placeholder="自动根据名称生成"></label><small>可使用英文、数字或中文；留空则自动生成。</small></details>
+          <div id="import-summary" class="import-summary"></div>
+          <div id="import-issues"></div>
+          <div class="form-footer"><span>图片引用会自动调整，其他文件保留原文件夹层级。</span><button class="primary" id="import-submit" type="submit">导入到知识库</button></div>
+        </div>
+      </form>
+    </section>
+    <section id="panel-trash" class="panel" hidden><div class="section-heading"><div><h2>回收站</h2><p>删除的笔记和分类保存在本机，可恢复到原位置。</p></div></div><div id="trash-list"></div></section>
+    <footer>更改会写入本地笔记库。发布时，按原来的 Git 提交与推送流程即可。</footer>
+  </main>
+  <dialog id="edit-dialog" aria-labelledby="edit-heading"><form id="edit-form"><div class="dialog-header"><h2 id="edit-heading">整理条目</h2><button type="button" data-close aria-label="关闭">×</button></div><input id="edit-slug" type="hidden"><label>名称<input id="edit-title" required maxlength="160"></label><label>所属分类<select id="edit-parent"></select></label><p class="hint">移动后旧页面地址仍可跳转。分类内的笔记会一起移动。</p><div class="form-footer"><button type="button" class="danger" id="delete-node">移入回收站</button><button type="submit" class="primary">保存更改</button></div></form></dialog>
+  <dialog id="category-dialog" aria-labelledby="category-heading"><form id="category-form"><div class="dialog-header"><h2 id="category-heading">新建知识分类</h2><button type="button" data-close aria-label="关闭">×</button></div><label>分类名称<input id="category-title" required maxlength="160"></label><label>所属分类<select id="category-parent"></select></label><details class="advanced"><summary>页面地址</summary><label>目录标识<input id="category-id" placeholder="自动根据名称生成"></label></details><div class="form-footer"><span></span><button type="submit" class="primary">创建分类</button></div></form></dialog>
+  <dialog id="delete-dialog" aria-labelledby="delete-heading"><form id="delete-form"><div class="dialog-header"><h2 id="delete-heading">移入回收站</h2><button type="button" data-close aria-label="关闭">×</button></div><p id="delete-message"></p><p class="hint">文件会保留在本机回收站中，之后可以恢复。</p><div class="form-footer"><button type="button" data-close>取消</button><button type="submit" class="danger-solid">移入回收站</button></div></form></dialog>
+</body></html>

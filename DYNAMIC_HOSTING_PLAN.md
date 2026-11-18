@@ -48,15 +48,15 @@ npm run supabase:import:dry
 npm run build
 ```
 
-首次或更换管理员密码时，在项目根目录运行 `npm run supabase:secrets`；密码在本机隐藏输入，不要写入聊天或 Git。初次导入/重新迁移需要本机忽略文件 `.env.import.local` 中的 service-role key，导入脚本会先检查数据库为空；不要把该文件提交。
+首次或更换管理员密码时，在项目根目录运行 `npm run supabase:secrets`；密码在本机隐藏输入，不要写入聊天或 Git。初次导入/重新迁移需要本机忽略文件 `.env.import.local` 中的 service-role key，导入脚本要求 `--confirm-initial-import`，并会检查目录、版本、资源、搜索段落和审计表均为空；不要把该文件提交。日常同步使用 `npm run supabase:sync:check`，不写云端；`npm run supabase:sync:snapshot` 将活动版本下载到被忽略的本地快照目录并记录哈希基线。
 
 ## 维护方式
 
-笔记内容修改：打开线上 `/admin/`，输入管理员密码，保存后立即可见，不需要 Astro 构建。代码、组件、分类源文件或静态回退页面修改：本机运行检查后提交 Git，GitHub Actions 重新发布 Pages。Supabase 内容和 Git 源码是两套备份，建议定期导出两者；恢复历史版本优先使用管理页，应用代码故障则回退 Git 提交。
+笔记内容修改：打开线上 `/admin/`，输入管理员密码，保存后立即可见，不需要 Astro 构建。代码、组件、分类源文件或静态回退页面修改：本机运行检查后提交 Git，GitHub Actions 重新发布 Pages。Supabase 内容和 Git 源码是两套备份。网页编辑后若要继续改本地文件，先运行 `npm run supabase:sync:snapshot`，再运行 `npm run supabase:sync:check`；双方同时修改时以快照和本地文件做人工合并，最终通过管理页按最新版本发布，避免旧文件覆盖云端。恢复历史版本优先使用管理页，应用代码故障则回退 Git 提交。
 
 ## 风险与边界
 
 - 免费额度、Storage 容量、Edge Function 执行和流量按 Supabase 当前计划计费规则变化；目前导入约 205.9 MB，低于 Free Storage 1 GB，但需定期检查用量。
 - 私有 Storage 使用短期签名 URL；不要把 service-role key、数据库密码或管理员密码提交到仓库。
 - 动态阅读页面需要 API 可用；静态 `/notes/...` 页面作为构建时回退，新增或移动后的云端路径通过 `/reader/*?liveNote=...` 模板读取。
-- 当前未实现整库一键导出界面；恢复依赖 Supabase 数据库/Storage 导出和 Git 源码备份。
+- 当前没有网页整库一键导出界面；本机 `npm run supabase:sync:snapshot` 可保存活动版本的文件快照，数据库级恢复仍依赖 Supabase 导出和 Git 源码备份。

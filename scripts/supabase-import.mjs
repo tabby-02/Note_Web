@@ -10,6 +10,7 @@ import { flattenLeaves, loadTaxonomy } from './taxonomy.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dryRun = process.argv.includes('--dry-run');
+const confirmedInitialImport = process.argv.includes('--confirm-initial-import');
 if (process.version.split('.')[0].slice(1) >= 24) {
   for (const file of ['.env.local', '.env.import.local']) {
     const absolute = path.join(root, file);
@@ -19,6 +20,9 @@ if (process.version.split('.')[0].slice(1) >= 24) {
 const url = process.env.PUBLIC_SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 if (!dryRun && (!url || !key)) throw new Error('Set PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in ignored local env files.');
+if (!dryRun && !confirmedInitialImport) {
+  throw new Error('This command is for the empty database initial import only. Re-run with --confirm-initial-import after verifying the database is empty.');
+}
 const db = !dryRun ? createClient(url, key, { auth: { persistSession: false } }) : null;
 const mimeTypes = new Map([
   ['.avif','image/avif'],['.gif','image/gif'],['.jpeg','image/jpeg'],['.jpg','image/jpeg'],['.png','image/png'],['.webp','image/webp'],['.svg','image/svg+xml'],
@@ -133,14 +137,28 @@ async function addNode(node, parentId = null, position = 0, parentParts = []) {
   if (publishError) throw new Error(`${node.slug}: ${publishError.message}`);
 }
 
+let importAllowed = true;
 if (!dryRun) {
-  const { count, error } = await db.from('taxonomy_nodes').select('id', { count: 'exact', head: true });
-  if (error) throw error;
-  if (count !== 0) throw new Error(`Supabase already contains ${count} taxonomy nodes; import stopped without changes.`);
-  const { data: bucket, error: bucketError } = await db.storage.getBucket('note-assets');
-  if (bucketError || !bucket) throw new Error('The private note-assets Storage bucket is unavailable. Apply the SQL migration first.');
+  const tables = ['taxonomy_nodes', 'note_versions', 'note_assets', 'search_passages', 'content_events'];
+  const counts = await Promise.all(tables.map(async (table) => {
+    const { count, error } = await db.from(table).select('id', { count: 'exact', head: true });
+    if (error) throw new Error(`${table}: ${error.message}`);
+    return [table, count ?? 0];
+  }));
+  const occupied = counts.filter(([, count]) => count > 0);
+  if (occupied.length) {
+    console.error(`Supabase is not empty (${occupied.map(([table, count]) => `${table}=${count}`).join(', ')}); initial import stopped without changes. Use supabase:sync:check to inspect drift.`);
+    importAllowed = false;
+  }
+  if (importAllowed) {
+    const { data: bucket, error: bucketError } = await db.storage.getBucket('note-assets');
+    if (bucketError || !bucket) throw new Error('The private note-assets Storage bucket is unavailable. Apply the SQL migration first.');
+  }
 }
-for (const [index, group] of groups.entries()) await addNode(group, null, index);
-console.log(`Prepared ${leaves.length} leaves, ${inventory.reduce((n, note) => n + note.files, 0)} files, ${(inventory.reduce((n, note) => n + note.bytes, 0) / 1024 / 1024).toFixed(1)} MB.`);
-if (dryRun) console.log('Dry run only; Supabase was not changed.');
-else console.log('Initial import complete. All published versions are live.');
+if (importAllowed) {
+  for (const [index, group] of groups.entries()) await addNode(group, null, index);
+  console.log(`Prepared ${leaves.length} leaves, ${inventory.reduce((n, note) => n + note.files, 0)} files, ${(inventory.reduce((n, note) => n + note.bytes, 0) / 1024 / 1024).toFixed(1)} MB.`);
+  if (dryRun) console.log('Dry run only; Supabase was not changed.');
+  else console.log('Initial import complete. All published versions are live.');
+}
+if (!dryRun && !importAllowed) process.exitCode = 1;

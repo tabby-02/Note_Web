@@ -13,6 +13,8 @@ public/scoped-search/
 .env.local
 .supabase-secrets.local
 .env.import.local
+.supabase-sync-baseline.json
+.supabase-snapshots/
 .supabase-keys.local.json
 .wrangler/
 /cloudflare/

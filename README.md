@@ -24,6 +24,25 @@
 
 公开网站不需要常驻 Node.js 后端或账号系统。管理页面随静态界面发布，写入只通过受保护的 Supabase API；浏览器中的主题、目录宽度等偏好保存在 `localStorage`，搜索历史和知识目录滚动位置保存在 `sessionStorage`。`.env.local` 只保存公开 URL/key，service-role key 和密码 Secret 仅用于本机导入/部署。
 
+### 动态内容数据流
+
+Astro 构建从 GitHub 仓库中的 `notes/` 生成静态回退页面。页面加载后会调用 Supabase `site-api` 的公开接口；接口可用时，阅读页、目录和搜索结果使用 Supabase 当前 `published` 版本。管理页的保存和上传先写入 `staging` 版本，完成资源清单、文件大小、类型、哈希和正文索引校验后，再以数据库事务切换活动版本。上传中断、浏览器关闭或并发版本变化不会替换访客正在阅读的版本。
+
+Supabase 的主要表为 `taxonomy_nodes`（语义树）、`note_versions`（版本状态）、`note_assets`（版本资源和哈希）、`search_passages`（搜索段落和锚点）、`content_events`（审计记录）及 `admin_login_attempts`（登录限速）。`note-assets` Storage bucket 为私有 bucket，浏览器只拿到短期签名 URL。管理员密码只以 PBKDF2 哈希存在 Edge Function Secret；service-role key 只用于本机脚本和 Supabase CLI。
+
+### 公开接口和管理接口
+
+| 范围 | 接口 | 作用 |
+| --- | --- | --- |
+| 公开 | `/api/health`、`/api/tree` | 检查内容服务和读取已发布语义树 |
+| 公开 | `/api/notes/<path>`、`/api/assets/<path>` | 读取笔记正文、Word 文档、图库资源和附件签名 URL |
+| 公开 | `/api/search` | 按知识目录、章节或正文搜索，支持指定单篇笔记 |
+| 管理 | `/api/auth/login`、`/api/admin/session` | 管理员登录、会话和 CSRF token |
+| 管理 | `/api/admin/taxonomy` | 新建、重命名、移动、回收和恢复目录或笔记 |
+| 管理 | `/api/admin/notes/*` | Markdown 保存、文件上传、发布、历史版本和恢复 |
+
+管理写入接口要求管理员会话、合法来源、CSRF token 和 `expectedVersion`；版本不一致返回 `409`，管理页会要求重新载入并比较内容。
+
 ## 主要依赖与用途
 
 以下版本来自当前 `package-lock.json`。`package.json` 声明允许的版本范围，`npm ci` 按锁文件安装确切版本；升级后以这两个文件为准。
@@ -71,7 +90,9 @@ Note_Web/
 │  ├─ validate-notes.mjs        校验笔记来源、格式、公式、图片和引用
 │  ├─ validate-site.mjs         校验构建页面、静态资源、导航及搜索跳转目标
 │  ├─ taxonomy.mjs              解析分类并生成导航及重定向
-│  ├─ import-notes.mjs          初次资料迁移脚本
+│  ├─ import-notes.mjs          将原始目录整理到 notes/ 的初次迁移脚本
+│  ├─ supabase-import.mjs       Supabase 空库首次导入（有强保护）
+│  ├─ supabase-sync.mjs         云端活动版本差异检查和快照
 │  └─ note-manager/             本机管理服务、页面、导入整理逻辑及测试
 ├─ public/
 │  ├─ library/                  自动复制的主文件、图片及辅助资料
@@ -81,6 +102,7 @@ Note_Web/
 ├─ .astro/                     Astro 缓存和搜索目标校验清单
 ├─ dist/                       正式构建产物，部署时发布此目录
 ├─ .github/workflows/deploy.yml GitHub Pages 构建发布流程
+├─ AGENTS.md                   后续开发对话必须先阅读的长期维护上下文
 ├─ astro.config.mjs            站点地址、基础路径、Starlight 和 Vite 配置
 ├─ package.json                依赖范围及 npm 命令
 └─ package-lock.json           确切依赖版本
@@ -128,6 +150,10 @@ npm run manage
 | `npm run test:reading` | 验证长笔记目录定位、重新排版后的定位和滚动时 DOM 更新次数 |
 | `npm run supabase:check` | 检查 Supabase Edge Function 类型和依赖 |
 | `npm run supabase:import:dry` | 校验 23 篇笔记和 932 个资源的导入清单，不修改云端 |
+| `npm run supabase:import:initial` | 仅在确认 Supabase 为空时执行首次导入；已有数据会停止 |
+| `npm run supabase:sync:check` | 只读比较本地 `notes/` 与 Supabase 活动版本，列出本地独有、云端独有和双方修改 |
+| `npm run supabase:sync:guard` | 同步前保护检查；发现差异时以退出码 2 停止后续命令 |
+| `npm run supabase:sync:snapshot` | 下载当前云端活动版本到被 Git 忽略的 `.supabase-snapshots/`，同时记录版本基线 |
 | `npm run build` | 依次运行 `prebuild`、Astro 静态构建、`postbuild`，产出并校验 `dist/` |
 | `npm run preview` | 启动构建产物预览，不重新生成笔记或重新构建 |
 
@@ -178,6 +204,32 @@ npm run dev
 
 部署后更新笔记直接使用公开站点的 `/admin/`，保存后立即写入 Supabase 活动版本，不触发构建。代码和分类结构变化仍需提交 Git 并触发 GitHub Pages 发布。具体操作见下节。
 
+### GitHub 代码与云端笔记的冲突规则
+
+GitHub Actions 只构建和发布应用代码，当前工作流不会执行完整 Supabase 导入；因此普通 `git push` 不会覆盖云端笔记。`npm run supabase:import:initial` 仅用于空数据库的首次迁移，并且会同时检查目录、版本、资源、搜索段落和审计表是否为空。已有云端内容时，脚本会直接停止；普通 `npm run supabase:import` 不带显式确认参数，会直接拒绝执行。
+
+需要把本地 `notes/` 与线上内容对照时，先在本机运行：
+
+```powershell
+npm run supabase:sync:check
+```
+
+准备继续修改代码前，先保留完整云端副本并建立三方比较基线：
+
+```powershell
+npm run supabase:sync:snapshot
+```
+
+快照写入 `.supabase-snapshots/`，不会改写本地 `notes/`，其中包含当前活动版本、主文件、图片和附件；`.supabase-sync-baseline.json` 只记录版本号和文件哈希，均已加入 `.gitignore`。之后再次运行 `npm run supabase:sync:check`：
+
+- `clean`：本地与云端一致，可以直接发布代码。
+- `local-changed`：只有本地变更，先在管理页按当前版本上传，成功后再推送代码。
+- `cloud-changed`：只有网页管理页变更，先把云端快照或正文合并回本地，再提交 Git。
+- `both-changed`：双方都改过，禁止直接导入；以快照为一侧、`notes/` 为另一侧人工合并，确认内容后通过管理页上传，遇到版本号 409 时重新加载并再次比较。
+- `drift`、`local-only`、`cloud-only`、`cloud-deleted`：表示没有可用基线或目录一侧缺少、删除了条目，先完成迁移决策再发布。
+
+推荐的日常顺序是“网页编辑后先快照，再改代码；代码发布前运行同步检查；有冲突先合并，再从管理页发布”。不要把 `supabase:import` 加入 GitHub Actions，也不要用旧的本地文件夹直接覆盖线上活动版本。`npm run supabase:sync:guard` 可放在本地发布脚本中，发现未处理差异时直接阻止构建发布。
+
 ## 维护笔记
 
 线上内容维护使用公开站点的管理页，无需运行本机管理服务器：
@@ -191,7 +243,7 @@ npm run dev
 3. **整理目录**：新建、重命名、移动分类或笔记；删除为可恢复的回收站操作。
 4. **编辑 Markdown**：源码编辑、预览、公式、文字高亮和预设底色，保存后实时生效。
 5. **阅读页轻量标注**：在 Markdown 正文中选中同一段纯文本后，可加粗、斜体、删除线、高亮、预设底色，以及替换、前插、后插或删除文字。首次保存会要求管理员密码；改动按当前版本号提交，遇到并发修改会拒绝覆盖并提示刷新。公式、图片、链接、代码、表格和跨段选区会引导到管理页，避免破坏原 Markdown 结构。
-5. **恢复版本**：在历史版本中选择旧版本恢复；使用乐观版本号避免覆盖其他标签页的修改。
+6. **恢复版本**：在历史版本中选择旧版本恢复；使用乐观版本号避免覆盖其他标签页的修改。
 
 本机 `npm run manage` 仍可用于离线整理源码目录，但它不参与线上实时发布。线上内容位于 Supabase；建议定期导出数据库和 Storage 对象，并保留 GitHub 仓库作为源文件备份。
 
@@ -200,12 +252,12 @@ npm run dev
 部署的网站的笔记内容由 Supabase 实时服务提供，网页管理页保存后立即可被新访客读取，不需要构建。应用代码、阅读器和静态目录结构的改动仍在本机提交并推送：
 
 ```powershell
-git add notes/
-git commit -m "Update learning notes"
-git push
+git add src scripts supabase notes README.md AGENTS.md package.json package-lock.json .github
+git commit -m "Describe the change"
+git push origin main
 ```
 
-推送到仓库默认分支后，GitHub Actions 会自动重新构建并发布 Pages。换电脑维护时，先克隆仓库或拉取最新改动；管理工具本身无需部署，也不会出现在公开网站中。
+提交前确认 `git status` 没有 `.env*`、service-role key、管理员密码、`.supabase-snapshots/`、`.astro/`、`dist/` 或其他生成文件。若同时修改了网页代码和笔记，应先运行 `npm run supabase:sync:guard`，再按上面的冲突规则处理。推送到仓库默认分支后，GitHub Actions 会自动重新构建并发布 Pages。换电脑维护时，先克隆仓库或拉取最新改动；管理工具本身无需部署，也不会出现在公开网站中。
 
 自动化验证管理工具：`npm run test:manager`。以下为手工维护时的目录约定：
 
@@ -231,4 +283,14 @@ git push
 ```powershell
 node scripts/import-notes.mjs H:\github\note
 ```
+
+## 故障排查
+
+- **页面显示旧笔记**：先检查 `/api/health` 和浏览器中的 `site-api` 请求；API 正常时以 Supabase 活动版本为准，API 不可用时才会显示 GitHub 构建时的静态回退版本。
+- **保存提示 409**：当前编辑页使用的版本已经过期。重新载入笔记，比较当前正文和待保存内容后再提交，不要重复点击覆盖。
+- **导入提示数据库不为空**：这是保护机制。不要再次执行初始导入；运行 `npm run supabase:sync:check`，需要保留云端内容时先运行 `npm run supabase:sync:snapshot`。
+- **本地管理文件夹窗口没有出现**：确认只运行一个 `npm run manage`，使用页面中的取消按钮释放旧请求，或设置 `NOTES_MANAGER_PORT` 使用其他端口。
+- **构建出现大 chunk 或 `/404` 路由警告**：当前是非阻塞警告；只要 `npm run build` 最终通过 `validate-site.mjs` 即可发布。修改路由或打包策略时需重新验证。
+
+长期维护上下文、架构决策、危险操作和修改历史见 [`AGENTS.md`](AGENTS.md)。后续开发对话应先阅读该文件，再决定是否修改代码或云端内容。
 

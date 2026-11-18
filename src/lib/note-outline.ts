@@ -33,11 +33,15 @@ export function initNoteOutline(outline: HTMLElement) {
     try { decoded = decodeURIComponent(id); } catch {}
     return document.getElementById(id) ?? document.getElementById(decoded);
   };
-  const entries = [...outline.querySelectorAll<HTMLAnchorElement>('.outline-links a')].flatMap((link) => {
-    const heading = targetFor(link.getAttribute('href') ?? '');
-    return heading ? [{ link, heading }] : [];
-  });
-  const byTarget = new Map(entries.map((entry) => [entry.heading, entry]));
+  let entries: Array<{ link: HTMLAnchorElement; heading: HTMLElement }> = [];
+  let byTarget = new Map<HTMLElement, { link: HTMLAnchorElement; heading: HTMLElement }>();
+  const refreshEntries = () => {
+    entries = [...outline.querySelectorAll<HTMLAnchorElement>('.outline-links a')].flatMap((link) => {
+      const heading = targetFor(link.getAttribute('href') ?? '');
+      return heading instanceof HTMLElement ? [{ link, heading }] : [];
+    });
+    byTarget = new Map(entries.map((entry) => [entry.heading, entry]));
+  };
   const header = document.querySelector<HTMLElement>('.header');
   const setCurrent = createActiveLinkSetter();
   let visible = entries;
@@ -56,6 +60,7 @@ export function initNoteOutline(outline: HTMLElement) {
   };
   const refreshVisible = () => {
     // Rebuild only when branches change, never on every scroll frame.
+    refreshEntries();
     visible = entries.filter(({ link }) => !link.closest('[hidden]'));
     schedule();
   };
@@ -91,6 +96,7 @@ export function initNoteOutline(outline: HTMLElement) {
   view.addEventListener('resize', schedule, { passive: true });
   view.addEventListener('pageshow', schedule);
   view.addEventListener('hashchange', revealHash);
+  document.addEventListener('notes:dynamic-content', refreshVisible);
   outline.addEventListener('click', schedule);
   void document.fonts.ready.then(schedule);
   refreshVisible();

@@ -48,3 +48,52 @@ import DirectoryResize from './DirectoryResize.astro';
     new ResizeObserver(restore).observe(tree);
   })();
 </script>
+
+<script>
+  import { getLiveTree, liveReaderUrl } from '../lib/live-backend';
+  type RuntimeNode = { id: string; title: string; path: string; kind: 'group' | 'note'; type: 'markdown' | 'docx' | 'gallery'; children?: RuntimeNode[] };
+  const tree = document.querySelector<HTMLElement>('#note-topic-tree');
+  if (tree) {
+    void (async () => {
+      const data = await getLiveTree();
+      if (!data?.tree.length) return;
+      const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+      const current = new URLSearchParams(location.search).get('liveNote') ?? decodeURI(location.pathname).replace(base, '').replace(/^notes\//, '').replace(/\/$/, '');
+      let scroll = 0;
+      try { scroll = Number(sessionStorage.getItem('notes-live-tree-scroll') ?? 0); } catch {}
+      const build = (nodes: RuntimeNode[]): HTMLUListElement => {
+        const list = document.createElement('ul'); list.className = 'topic-runtime-list';
+        for (const node of nodes) {
+          const item = document.createElement('li'); item.className = 'topic-runtime-item';
+          const href = node.kind === 'note' ? liveReaderUrl(node) : node.path;
+          if (node.kind === 'group') {
+            const details = document.createElement('details'); details.open = current === node.path || current.startsWith(node.path + '/');
+            try { const saved = sessionStorage.getItem(`notes-live-branch:${node.id}`); if (saved !== null) details.open = saved === 'true'; } catch {}
+            details.addEventListener('toggle', () => { try { sessionStorage.setItem(`notes-live-branch:${node.id}`, String(details.open)); } catch {} });
+            const summary = document.createElement('summary'); summary.textContent = node.title;
+            details.append(summary, build(node.children ?? [])); item.append(details);
+          } else {
+            const link = document.createElement('a'); link.href = href; link.textContent = node.title;
+            if (current === node.path) { link.setAttribute('aria-current', 'page'); }
+            item.append(link);
+          }
+          list.append(item);
+        }
+        return list;
+      };
+      tree.replaceChildren(build(data.tree));
+      tree.scrollTop = scroll;
+      tree.addEventListener('scroll', () => { try { sessionStorage.setItem('notes-live-tree-scroll', String(tree.scrollTop)); } catch {} }, { passive: true });
+    })().catch((error) => console.error('Could not load the live knowledge tree', error));
+  }
+</script>
+
+<style>
+  .topic-tree :global(.topic-runtime-list) { display: grid; gap: .12rem; margin: 0; padding: 0; list-style: none; }
+  .topic-tree :global(.topic-runtime-list .topic-runtime-list) { margin: .12rem 0 .35rem .5rem; padding-left: .55rem; border-left: 1px solid var(--sl-color-gray-5); }
+  .topic-tree :global(.topic-runtime-item) { min-width: 0; margin: 0; padding: 0; list-style: none; }
+  .topic-tree :global(.topic-runtime-item > details > summary), .topic-tree :global(.topic-runtime-item > a) { display: block; min-width: 0; padding: .35rem .5rem; border-radius: 4px; color: var(--sl-color-text); font-size: var(--sl-text-sm); line-height: 1.45; text-decoration: none; cursor: pointer; }
+  .topic-tree :global(.topic-runtime-item > details > summary) { font-weight: 650; }
+  .topic-tree :global(.topic-runtime-item > a[aria-current='page']) { background: var(--sl-color-accent-low); color: var(--sl-color-accent-high); font-weight: 700; }
+  .topic-tree :global(.topic-runtime-item > details > summary:hover), .topic-tree :global(.topic-runtime-item > a:hover) { background: var(--sl-color-gray-6); color: var(--sl-color-accent-high); }
+</style>

@@ -23,6 +23,7 @@ const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL :
 </search-box>
 
 <script>
+  import { liveFetch, liveReaderUrl } from '../lib/live-backend';
   type Scope = 'topic' | 'outline' | 'body';
   type SearchResult = { url: string; excerpt: string; meta: { title?: string }; data: () => Promise<{ url: string; excerpt: string; meta: { title?: string } }> };
   type SearchEngine = { search: (query: string, options: { filters: Record<string, string[]> }) => Promise<{ results: SearchResult[] }> };
@@ -38,7 +39,8 @@ const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL :
       const historyItems = this.querySelector<HTMLElement>('[data-history-items]')!;
       const more = this.querySelector<HTMLButtonElement>('[data-search-more]')!;
       const base = this.dataset.searchBase ?? '/';
-      const currentNote = document.querySelector<HTMLElement>('[data-search-note]')?.dataset.searchNote ?? '';
+      let currentNote = document.querySelector<HTMLElement>('[data-search-note]')?.dataset.searchNote ?? '';
+      document.addEventListener('notes:live-note', (event) => { currentNote = (event as CustomEvent).detail.path; });
       let scope: Scope = 'body';
       let pagefind: SearchEngine | null = null;
       let debounce: ReturnType<typeof setTimeout>;
@@ -46,6 +48,8 @@ const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL :
       let revision = 0;
       let matches: SearchResult[] = [];
       let displayed = 0;
+      let onlineOffset: number | null = null;
+      let onlineTotal = 0;
       let loading: Promise<SearchEngine> | undefined;
       const historyKey = 'notes-search-history';
       const getHistory = (): string[] => {
@@ -97,6 +101,29 @@ const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL :
       };
       const showMore = async (request: number, query: string) => {
         more.disabled = true;
+        if (displayed >= matches.length && onlineOffset !== null && onlineOffset < onlineTotal) {
+          const params = new URLSearchParams({ q: query, scope, offset: String(onlineOffset) });
+          if (scope === 'body' && onlyCurrent.checked && currentNote) params.set('note', currentNote.split('/').at(-1) ?? '');
+          const response = await liveFetch(`/api/search?${params}`);
+          if (!response.ok) throw new Error('Search page request failed');
+          const page = await response.json() as { total: number; results: Array<{ path: string; type: 'markdown' | 'docx' | 'gallery'; note_title: string; title: string; content: string; anchor: string; scope: Scope }> };
+          onlineTotal = page.total;
+          onlineOffset += page.results.length;
+          const escape = (text: string) => text.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!);
+          const highlight = (text: string) => {
+            let html = escape(text);
+            for (const word of query.split(/\s+/).filter(Boolean).sort((a, b) => b.length - a.length)) {
+              const safe = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              html = html.replace(new RegExp(`(${safe})`, 'giu'), '<mark>$1</mark>');
+            }
+            return html;
+          };
+          matches.push(...page.results.map((result) => {
+            const detail = { url: liveReaderUrl({ path: result.path, type: result.type }, result.anchor ?? ''),
+              excerpt: highlight(result.content), meta: { title: result.scope === 'body' ? `${result.note_title} · ${result.title}` : result.title || result.note_title } };
+            return { ...detail, data: async () => detail };
+          }));
+        }
         const batch = matches.slice(displayed, displayed + 40);
         const details = await Promise.all(batch.map((match) => match.data()));
         if (request !== revision) return;
@@ -110,16 +137,45 @@ const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL :
         }
         results.append(fragment); displayed += details.length;
         more.disabled = false;
-        more.hidden = displayed >= matches.length;
-        more.textContent = `显示更多匹配（已显示 ${displayed} / ${matches.length}）`;
+        more.hidden = displayed >= matches.length && (onlineOffset === null || onlineOffset >= onlineTotal);
+        more.textContent = `显示更多匹配（已显示 ${displayed} / ${onlineOffset === null ? matches.length : onlineTotal}）`;
       };
       const run = async () => {
         const request = ++revision;
         const query = input.value.trim();
         results.replaceChildren(); more.hidden = true; displayed = 0;
+        onlineOffset = null; onlineTotal = 0;
         if (!query) { status.textContent = '输入关键词开始搜索'; return; }
-        status.textContent = pagefind ? '正在搜索…' : '正在载入搜索索引…';
+        status.textContent = '正在搜索…';
         try {
+          const online = await liveFetch(`/api/search?q=${encodeURIComponent(query)}&scope=${scope}${scope === 'body' && onlyCurrent.checked && currentNote ? `&note=${encodeURIComponent(currentNote.split('/').at(-1) ?? '')}` : ''}`).catch(() => null);
+          if (online?.ok) {
+            const response = await online.json() as { total: number; results: Array<{ path: string; type: 'markdown' | 'docx' | 'gallery'; note_title: string; title: string; content: string; anchor: string; scope: Scope }> };
+            onlineOffset = response.results.length;
+            onlineTotal = response.total;
+            const escape = (text: string) => text.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!);
+            const highlight = (text: string) => {
+              let html = escape(text);
+              for (const word of query.split(/\s+/).filter(Boolean).sort((a, b) => b.length - a.length)) {
+                const safe = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                html = html.replace(new RegExp(`(${safe})`, 'giu'), '<mark>$1</mark>');
+              }
+              return html;
+            };
+            matches = response.results.map((result) => {
+              const detail = {
+                url: liveReaderUrl({ path: result.path, type: result.type }, result.anchor ?? ''),
+                excerpt: highlight(result.content),
+                meta: { title: result.scope === 'body' ? `${result.note_title} · ${result.title}` : result.title || result.note_title },
+              };
+              return { ...detail, data: async () => detail };
+            });
+            if (request !== revision) return;
+            status.textContent = matches.length ? `找到 ${onlineTotal} 处匹配${scope === 'body' ? '段落' : ''}` : '没有匹配结果';
+            await showMore(request, query);
+            return;
+          }
+          onlineOffset = null;
           loading ??= import(/* @vite-ignore */ `${base}scoped-search/pagefind.js`);
           pagefind = await loading;
           if (request !== revision || !pagefind) return;
@@ -128,7 +184,7 @@ const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL :
           const response = await pagefind.search(query, { filters });
           if (request !== revision) return;
           matches = response.results;
-          status.textContent = matches.length ? `找到 ${matches.length} 处匹配${scope === 'body' ? '段落' : ''}` : '没有匹配结果';
+          status.textContent = matches.length ? `找到 ${onlineTotal} 处匹配${scope === 'body' ? '段落' : ''}` : '没有匹配结果';
           await showMore(request, query);
           if (request !== revision) return;
         } catch {

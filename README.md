@@ -1,6 +1,14 @@
 # 个人学习笔记网站
 
-基于 Astro 和 Starlight 的静态笔记站。笔记按 `notes/taxonomy.yml` 中的知识主题组织；每个叶子条目通过 `note.yml` 标记类型，支持 Markdown、DOCX 和图片集。
+基于 Astro 和 Starlight 的学习笔记站。GitHub Pages 托管公开静态界面，Supabase Edge Function、Postgres 和私有 Storage 提供无需本地常驻服务器的实时笔记读取与管理。笔记按 `notes/taxonomy.yml` 中的知识主题组织；云端活动版本支持 Markdown、DOCX 和图片集。
+
+## 实时托管状态
+
+实时架构实施记录见 [`DYNAMIC_HOSTING_PLAN.md`](DYNAMIC_HOSTING_PLAN.md)。Supabase 项目已完成数据库迁移、私有 `note-assets` Storage、`site-api` Edge Function 和初始内容导入；GitHub Pages 继续负责应用代码发布。
+
+网页管理入口为 `/admin/`：使用管理员密码登录，编辑 Markdown 并实时发布；也可导入 Markdown、Word、图片集文件夹，更新现有主文件/图片/附件或整个叶子目录，管理语义分类、移动、回收站和版本恢复。内容发布直接切换 Postgres 活动版本与 Storage 对象，不触发 Astro 构建。Git 提交仍用于部署应用代码和保留源码备份。
+
+管理员密码只由 Supabase Edge Function Secret 校验；密码使用 PBKDF2 哈希保存，原密码不进入前端、数据库或 Git。运行 `npm run supabase:secrets` 可在本机隐藏输入密码并设置 `ADMIN_PASSWORD_HASH` 与 `SESSION_SIGNING_SECRET`，不要把 Secret 或 service-role key 发到聊天或提交到仓库。
 
 ## 技术架构与服务
 
@@ -14,7 +22,7 @@
 | GitHub Actions | `.github/workflows/deploy.yml` | 在仓库默认分支上安装依赖、构建、校验并上传静态产物 |
 | GitHub Pages | 当前配置：`https://tabby-02.github.io/Note_Web/` | 托管 `dist/` 静态文件，供公开阅读 |
 
-公开网站不需要常驻 Node.js 后端、数据库、账号系统或外部内容管理平台。管理页面有本机接口，但它们不属于公开阅读网站，也不会部署到 Pages。管理操作直接修改项目内的 `notes/` 和分类配置；浏览器中的主题、目录宽度等偏好保存在 `localStorage`，搜索历史和知识目录滚动位置保存在 `sessionStorage`。
+公开网站不需要常驻 Node.js 后端或账号系统。管理页面随静态界面发布，写入只通过受保护的 Supabase API；浏览器中的主题、目录宽度等偏好保存在 `localStorage`，搜索历史和知识目录滚动位置保存在 `sessionStorage`。`.env.local` 只保存公开 URL/key，service-role key 和密码 Secret 仅用于本机导入/部署。
 
 ## 主要依赖与用途
 
@@ -118,6 +126,8 @@ npm run manage
 | `npm run test:manager` | 验证导入、引用重写、分类移动、回收站、失败回滚及本机接口 |
 | `npm run test:search` | 验证搜索索引与正文锚点一致、嵌套内容去重、Word 文本提取 |
 | `npm run test:reading` | 验证长笔记目录定位、重新排版后的定位和滚动时 DOM 更新次数 |
+| `npm run supabase:check` | 检查 Supabase Edge Function 类型和依赖 |
+| `npm run supabase:import:dry` | 校验 23 篇笔记和 932 个资源的导入清单，不修改云端 |
 | `npm run build` | 依次运行 `prebuild`、Astro 静态构建、`postbuild`，产出并校验 `dist/` |
 | `npm run preview` | 启动构建产物预览，不重新生成笔记或重新构建 |
 
@@ -166,29 +176,27 @@ Remove-Item Env:GITHUB_PAGES
 npm run dev
 ```
 
-部署后更新笔记仍使用本机管理服务，保存后提交并推送 `notes/`，触发静态站点重新发布。具体操作见下节。
+部署后更新笔记直接使用公开站点的 `/admin/`，保存后立即写入 Supabase 活动版本，不触发构建。代码和分类结构变化仍需提交 Git 并触发 GitHub Pages 发布。具体操作见下节。
 
 ## 维护笔记
 
-推荐使用本地管理工具，无需手工修改 YAML：
+线上内容维护使用公开站点的管理页，无需运行本机管理服务器：
 
-```powershell
-npm run manage
-```
+打开已部署站点的 `/admin/`，输入管理员密码。
 
-打开终端中显示的 `http://127.0.0.1:4322/`：
+管理页提供以下操作：
 
-1. **导入笔记**：点击“选择文件夹”（Windows 原生选择窗口），或粘贴文件夹完整路径；工具识别 Markdown、Word 或图片集。有多个主文件时，在“主文件”中选择要展示的一份。
-2. 填写名称、选择知识分类，再点击“导入到知识库”。工具复制资料、重写 Markdown 本地资源引用、生成 `note.yml` 并更新知识目录；原文件保持不变，其他笔记和辅助文件保留为附件。
-3. **整理目录**：在知识库点击条目右侧“整理”，可以重命名、移动笔记或整个分类。移动后旧页面地址会自动跳转到新位置；“新建分类”支持创建顶层及子分类。
-4. **删减与恢复**：点击“移入回收站”，笔记及其文件会一起移出网站。回收站可恢复到原位置；如果原分类也被删除，应先恢复原分类。
-5. **检查笔记**：检查图片引用、文内跳转、公式、DOCX 与图片集。图片集支持任意数量和多层目录的章节，检查空章节及损坏图片，不再固定为十章。
+1. **导入笔记**：选择文件夹，管理页识别 Markdown、Word 或图片集，并显示上传清单；可选择主文件后确认发布。
+2. **更新内容**：可只更新主文件、主文件和图片、附件，或整个文件夹重新识别；上传完成后立即切换活动版本。
+3. **整理目录**：新建、重命名、移动分类或笔记；删除为可恢复的回收站操作。
+4. **编辑 Markdown**：源码编辑、预览、公式、文字高亮和预设底色，保存后实时生效。
+5. **恢复版本**：在历史版本中选择旧版本恢复；使用乐观版本号避免覆盖其他标签页的修改。
 
-管理工具只监听本机，不会部署到 GitHub Pages。回收站位于 `.notes-manager/trash/`，已从 Git 排除；它只保存在当前电脑。管理工具与 `npm run dev` 可分别运行，保存后自动生成页面并更新开发网站；发布仍需将笔记库更改提交、推送到 GitHub。
+本机 `npm run manage` 仍可用于离线整理源码目录，但它不参与线上实时发布。线上内容位于 Supabase；建议定期导出数据库和 Storage 对象，并保留 GitHub 仓库作为源文件备份。
 
 ### 网站部署后更新笔记
 
-部署的网站是静态只读页面，不能从网页端直接改写仓库文件。更新时在有项目仓库的电脑上拉取最新版本，运行 `npm run manage`，通过本机管理页面导入、移动或删减笔记；保存操作会修改项目内的 `notes/` 和 `notes/taxonomy.yml`，原始来源目录不会被改动。完成后运行 `npm run build` 做完整校验，再提交并推送：
+部署的网站的笔记内容由 Supabase 实时服务提供，网页管理页保存后立即可被新访客读取，不需要构建。应用代码、阅读器和静态目录结构的改动仍在本机提交并推送：
 
 ```powershell
 git add notes/
@@ -207,7 +215,7 @@ git push
 - 更改主题名称、路由、类型或来源记录时，同步更新 `notes/taxonomy.yml` 和对应的 `note.yml`。
 - 同一源 Markdown 按章节拆分时，用 `sourceSections` 记录原始一级标题；前端笔记已拆为 Web 基础与前端工程/Vue。旧路由通过 `legacySlugs` 保留跳转。
 
-顶部搜索使用 Pagefind，可切换“知识目录”“章节目录”“笔记正文”三个范围；正文范围可搜索全部笔记或仅当前笔记。同一主文件中多个命中段落会分别列出，关键词高亮，点击正文结果会跳到对应段落，章节结果跳到章节标题。结果较多时每批显示 40 条，点击“显示更多匹配”继续查看。最近 8 个搜索词只保存在当前标签页的临时会话存储中，可点击重搜或清除；输入停顿不会保存，点击输入框以外的位置、操作搜索选项、按 Enter/Tab 或关闭搜索时才保存本次完整输入，清除历史后不会重新补存当前词。正文索引包含 Markdown 和 Word 主文档，不读取辅助文件；图片集可按章节目录标题搜索。修改笔记后，通过管理工具保存或重新运行 `npm run dev` 可刷新索引；发布时自动重建。搜索回归检查：`npm run test:search`。
+顶部搜索使用 Pagefind，可切换“知识目录”“章节目录”“笔记正文”三个范围；正文范围可搜索全部笔记或仅当前笔记。同一主文件中多个命中段落会分别列出，关键词高亮，点击正文结果会跳到对应段落，章节结果跳到章节标题。实时 API 可在保存后立即更新索引；静态回退页面仍由构建时 Pagefind 提供搜索。搜索回归检查：`npm run test:search`。
 
 桌面阅读页左侧依次为知识目录、本页目录，两者可分别收起并记住状态，各自独立滚动。知识目录切换笔记或刷新时保留当前标签页内的滚动位置。本页目录为可折叠树，默认展示两级，可逐支展开，或一键全部展开/收起到一级；手机上知识目录使用顶部菜单，本页目录在正文前折叠展示。
 

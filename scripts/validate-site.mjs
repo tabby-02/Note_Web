@@ -70,6 +70,9 @@ for (const file of outputFiles) {
     const outlines = $('[data-note-outline]');
     const headings = $('.note-prose :is(h1,h2,h3,h4,h5,h6)[id], [data-gallery-chapter][id]').filter((_, element) => Boolean($(element).attr('id')));
     const pageName = path.relative(dist, file);
+    // Runtime reader templates intentionally start empty; their data and anchors
+    // are filled from Supabase after navigation.
+    if (pageName.startsWith('reader\\') || pageName.startsWith('reader/')) continue;
     const pageUrl = `/${pageName.replaceAll('\\', '/').replace(/index\.html$/, '')}`;
     const targets = searchTargets.get(pageUrl) ?? [];
     const targetIds = new Set($('[id]').toArray().map((element) => $(element).attr('id')));

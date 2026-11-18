@@ -1,0 +1,15 @@
+{
+  "imports": {
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.108.0",
+    "markdown-it": "npm:markdown-it@15.0.3",
+    "markdown-it-anchor": "npm:markdown-it-anchor@10.0.0",
+    "markdown-it-emoji": "npm:markdown-it-emoji@3.1.0",
+    "markdown-it-texmath": "npm:markdown-it-texmath@1.0.0",
+    "katex": "npm:katex@0.19.1",
+    "highlight.js": "npm:highlight.js@11.12.0",
+    "cheerio": "npm:cheerio@1.2.0",
+    "jszip": "npm:jszip@3.10.2"
+  },
+  "compilerOptions": { "strict": true, "noImplicitAny": false },
+  "nodeModulesDir": "auto"
+}

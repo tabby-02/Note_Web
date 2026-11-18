@@ -1,0 +1,7 @@
+---
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import Reader from '../../components/WordNote.astro';
+---
+<StarlightPage frontmatter={{ title: '正在读取笔记…', tableOfContents: false, editUrl: false, prev: false, next: false }}>
+  <Reader runtimeOnly={true} />
+</StarlightPage>

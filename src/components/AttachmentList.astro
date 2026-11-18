@@ -8,9 +8,10 @@ import AttachmentTree from './AttachmentTree.astro';
 interface Props {
   leafPath: string;
   exclude?: string[];
+  runtimeOnly?: boolean;
 }
 
-const { leafPath, exclude = [] }: Props = Astro.props;
+const { leafPath, exclude = [], runtimeOnly = false }: Props = Astro.props;
 const leafRoot = path.resolve(process.cwd(), 'notes', ...leafPath.split('/'));
 const siteBase = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
 const base = `${siteBase}library/${leafPath}/attachments/`;
@@ -23,7 +24,7 @@ function walk(dir: string, prefix = ''): Array<{ relative: string; absolute: str
     return entry.isDirectory() ? walk(absolute, relative) : [{ relative, absolute }];
   });
 }
-const files = walk(path.join(leafRoot, 'attachments'))
+const files = (runtimeOnly ? [] : walk(path.join(leafRoot, 'attachments')))
   .filter((file) => !excluded.has(path.resolve(file.absolute)))
   .map((file) => {
     const extension = path.extname(file.relative).toLowerCase();
@@ -49,8 +50,8 @@ for (const file of files) {
 const folders = (node: FileNode): number => node.children.length + node.children.reduce((sum, child) => sum + folders(child), 0);
 ---
 
-{files.length > 0 && (
-  <div class="attachment-dock" data-attachment-dock>
+{(
+  <div class="attachment-dock" data-attachment-dock hidden={files.length === 0}>
     <button class="attachment-dock-handle" type="button" data-attachment-dock-toggle data-attachment-count={files.length} aria-expanded="false" aria-controls="attachment-dock-panel" aria-label={`展开辅助文件，共${files.length}项`} title="展开辅助文件"><Paperclip size={17} aria-hidden="true" /><span>辅助文件</span><b>{files.length}</b><ChevronDown class="dock-caret" size={14} aria-hidden="true" /></button>
     <aside class="attachment-rail" id="attachment-dock-panel" aria-label="辅助文件" inert>
       <div class="attachment-panel-header"><span>辅助文件</span><small>{folders(tree)} 个文件夹 · {files.length} 个文件</small><button type="button" data-attachment-dock-close aria-label="向右收起辅助文件" title="向右收起"><ChevronDown class="dock-caret" size={15} aria-hidden="true" /></button></div>
@@ -62,6 +63,73 @@ const folders = (node: FileNode): number => node.children.length + node.children
   </div>
 )}
 <AttachmentPreview />
+
+<script>
+  import { getLiveNote } from '../lib/live-backend';
+  type NoteNode = { id: string; path: string; children?: NoteNode[] };
+  type Asset = { relative_path: string; role: string; url: string };
+  const flatten = (nodes: NoteNode[]): NoteNode[] => nodes.flatMap((node) => [node, ...flatten(node.children ?? [])]);
+
+  document.querySelectorAll<HTMLElement>('[data-note-id]').forEach((layout) => {
+    void (async () => {
+      const note = await getLiveNote(layout);
+      if (!note) return;
+      const assets = (note.assets ?? []).filter((asset) => ['attachment', 'pdf'].includes(asset.role));
+      const dock = layout.querySelector<HTMLElement>('[data-attachment-dock]') ?? document.querySelector<HTMLElement>('[data-attachment-dock]');
+      if (!dock) return;
+      dock.hidden = assets.length === 0;
+      if (!assets.length) return;
+      const list = dock.querySelector<HTMLElement>('[data-attachment-list]');
+      const treeRoot = list?.querySelector<HTMLElement>('.attachment-tree');
+      const toggle = dock.querySelector<HTMLElement>('[data-attachment-dock-toggle]');
+      const small = dock.querySelector<HTMLElement>('.attachment-panel-header small');
+      if (!list || !treeRoot || !toggle) return;
+      type Folder = { name: string; folders: Map<string, Folder>; files: Asset[] };
+      const root: Folder = { name: '', folders: new Map(), files: [] };
+      for (const asset of assets) {
+        const parts = asset.relative_path.replace(/^attachments\//, '').split('/');
+        let folder = root;
+        for (const part of parts.slice(0, -1)) {
+          if (!folder.folders.has(part)) folder.folders.set(part, { name: part, folders: new Map(), files: [] });
+          folder = folder.folders.get(part)!;
+        }
+        folder.files.push(asset);
+      }
+      const countFiles = (folder: Folder): number => folder.files.length + [...folder.folders.values()].reduce((sum, child) => sum + countFiles(child), 0);
+      const build = (folder: Folder, depth: number, prefix = ''): HTMLUListElement => {
+        const ul = document.createElement('ul'); ul.className = 'attachment-tree';
+        for (const child of [...folder.folders.values()].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true }))) {
+          const li = document.createElement('li'); li.className = 'attachment-folder-item';
+          const details = document.createElement('details'); details.className = 'attachment-folder'; details.dataset.attachmentFolder = '';
+          details.dataset.folderPath = prefix ? `${prefix}/${child.name}` : child.name; details.open = depth === 0;
+          const summary = document.createElement('summary'); const name = document.createElement('span'); name.textContent = child.name;
+          const count = document.createElement('small'); count.textContent = String(countFiles(child)); summary.append(name, count);
+          details.append(summary, build(child, depth + 1, details.dataset.folderPath)); li.append(details); ul.append(li);
+        }
+        for (const asset of [...folder.files].sort((a, b) => a.relative_path.localeCompare(b.relative_path, 'zh-CN', { numeric: true }))) {
+          const relative = asset.relative_path.replace(/^attachments\//, ''); const filename = relative.split('/').at(-1) ?? relative;
+          const li = document.createElement('li'); li.className = 'attachment-file-item';
+          const row = document.createElement('div'); row.className = 'attachment-row';
+          const open = document.createElement('button'); open.type = 'button'; open.dataset.attachmentOpen = ''; open.dataset.attachmentUrl = asset.url; open.dataset.attachmentName = relative; open.title = `预览 ${relative}`;
+          const label = document.createElement('span'); label.textContent = filename; open.append(label);
+          const download = document.createElement('a'); download.className = 'download-link'; download.href = asset.url; download.download = ''; download.setAttribute('aria-label', `下载 ${relative}`); download.textContent = '下载';
+          row.append(open, download); li.append(row); ul.append(li);
+        }
+        return ul;
+      };
+      treeRoot.replaceWith(build(root, 0));
+      const count = countFiles(root);
+      toggle.dataset.attachmentCount = String(count); toggle.setAttribute('aria-label', `展开辅助文件，共${count}项`);
+      const badge = toggle.querySelector('b'); if (badge) badge.textContent = String(count);
+      if (small) small.textContent = `${root.folders.size} 个文件夹 · ${count} 个文件`;
+      document.querySelectorAll<HTMLDetailsElement>('[data-attachment-folder]').forEach((folder) => {
+        const key = `notes-attachment-folder:${folder.dataset.folderPath}`;
+        try { const saved = localStorage.getItem(key); if (saved !== null) folder.open = saved === 'true'; } catch {}
+        folder.addEventListener('toggle', () => { try { localStorage.setItem(key, String(folder.open)); } catch {} });
+      });
+    })().catch((error) => console.error('Could not load published attachments', error));
+  });
+</script>
 
 <style>
 </style>

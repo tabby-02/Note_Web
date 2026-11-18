@@ -1,0 +1,417 @@
+---
+import 'katex/dist/katex.min.css';
+const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+---
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>笔记管理</title>
+    <style>
+      dialog { max-width: min(1000px, 90vw); max-height: 85vh; padding: 24px; border: 1px solid #8886; border-radius: 10px; }
+      dialog::backdrop { background: #0008; }
+      dialog pre { max-height: 45vh; overflow: auto; font-size: .8rem; }
+      [data-preview-content] { min-width: min(700px, 75vw); overflow-wrap: anywhere; line-height: 1.8; }
+      [data-preview-content] img { max-width: 100%; }
+      :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+      body { max-width: 1100px; margin: 0 auto; padding: 24px; background: Canvas; color: CanvasText; }
+      header, .toolbar, .actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+      header { justify-content: space-between; border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, transparent); margin-bottom: 18px; }
+      h1 { font-size: 1.3rem; }
+      label { display: grid; gap: 6px; font-size: .9rem; }
+      input, select, textarea, button { font: inherit; color: inherit; background: Canvas; border: 1px solid color-mix(in srgb, CanvasText 35%, transparent); border-radius: 4px; padding: 8px 10px; }
+      button { cursor: pointer; }
+      .login { display: flex; gap: 8px; align-items: end; margin: 36px auto; max-width: 520px; }
+      .login label { flex: 1; }
+      .toolbar { margin: 16px 0; }
+      .taxonomy-tools { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); align-items: end; gap: 10px; margin: 14px 0; padding: 12px 0; border-block: 1px solid color-mix(in srgb, CanvasText 18%, transparent); }
+      .taxonomy-tools label { min-width: 0; }
+      .toolbar label { min-width: 220px; }
+      textarea { width: 100%; min-height: 65vh; box-sizing: border-box; resize: vertical; font: 14px/1.6 ui-monospace, monospace; tab-size: 2; }
+      .status { min-height: 1.5em; color: color-mix(in srgb, CanvasText 72%, transparent); }
+      [hidden] { display: none !important; }
+      @media (max-width: 760px) { .taxonomy-tools { grid-template-columns: 1fr 1fr; } }
+      @media (max-width: 600px) { body { padding: 14px; } .login { align-items: stretch; flex-direction: column; } textarea { min-height: 55vh; } .taxonomy-tools { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body data-base={base}>
+    <header><h1>笔记管理</h1><a href={base}>返回阅读</a></header>
+    <form class="login" data-login>
+      <label>管理员密码<input type="password" autocomplete="current-password" required minlength="1" /></label>
+      <button>登录</button>
+    </form>
+    <p class="status" role="status" aria-live="polite" data-status></p>
+    <main data-editor hidden>
+      <div class="toolbar">
+        <label>选择笔记<select data-note><option value="">加载笔记目录…</option></select></label>
+        <button type="button" data-refresh>重新载入</button>
+        <label>历史版本<select data-version><option value="">加载历史…</option></select></label>
+        <button type="button" data-restore>恢复所选版本</button>
+        <button type="button" data-logout>退出</button>
+      </div>
+      <section class="taxonomy-tools" aria-label="知识目录管理">
+        <label>名称<input data-title maxlength="120" placeholder="分类或笔记名称" /></label>
+        <label>所属/目标分类<select data-parent><option value="">顶层</option></select></label>
+        <label>选择分类<select data-category><option value="">选择分类…</option></select></label>
+        <label>笔记类型<select data-note-type><option value="markdown">Markdown</option><option value="docx">Word</option><option value="gallery">图片集</option></select></label>
+        <div class="actions">
+          <button type="button" data-create-group>新建分类</button>
+          <button type="button" data-create-note>新建笔记</button>
+          <button type="button" data-pick="new-folder">导入新文件夹</button>
+          <button type="button" data-rename>重命名所选笔记</button>
+          <button type="button" data-move>移动所选笔记</button>
+          <button type="button" data-delete>移入回收站</button>
+          <button type="button" data-restore-deleted>恢复所选笔记</button>
+          <button type="button" data-rename-category>重命名所选分类</button>
+          <button type="button" data-move-category>移动所选分类</button>
+          <button type="button" data-delete-category>移入回收站分类</button>
+          <button type="button" data-restore-category>恢复所选分类</button>
+        </div>
+      </section>
+      <div class="actions" data-markdown-controls aria-label="文本格式">
+        <button type="button" data-preview>预览正文</button>
+        <button type="button" data-wrap="**">加粗</button>
+        <button type="button" data-mark>高亮</button>
+        <button type="button" data-bg="yellow">黄色底色</button>
+        <button type="button" data-bg="green">绿色底色</button>
+        <button type="button" data-bg="blue">蓝色底色</button>
+        <button type="button" data-wrap="`">行内代码</button>
+        <button type="button" data-insert="$$\n\n$$">公式</button>
+      </div>
+      <div class="upload-controls" aria-label="上传笔记文件">
+        <button type="button" data-pick="main">更新主文件</button>
+        <button type="button" data-pick="main-media">主文件和图片文件夹</button>
+        <button type="button" data-pick="attachments">仅上传附件</button>
+        <button type="button" data-pick="folder">整个文件夹重新识别</button>
+        <input hidden type="file" data-upload-main accept=".md,.docx" />
+        <input hidden type="file" data-upload-main-media multiple />
+        <input hidden type="file" data-upload-attachments multiple />
+        <input hidden type="file" data-upload-folder multiple />
+        <input hidden type="file" data-upload-new-folder multiple />
+      </div>
+      <textarea data-content data-markdown-controls spellcheck="false" aria-label="Markdown 正文"></textarea>
+      <div class="actions" data-markdown-controls><button type="button" data-save>保存并立即发布</button></div>
+    </main>
+    <dialog data-upload-review aria-label="确认上传清单">
+      <form method="dialog">
+        <h2>检查上传内容</h2>
+        <label>主笔记文件<select data-upload-primary></select></label>
+        <p data-upload-summary></p>
+        <pre data-upload-files></pre>
+        <div class="actions"><button value="cancel">取消</button><button value="confirm" data-upload-confirm>确认并发布</button></div>
+      </form>
+    </dialog>
+    <dialog data-note-preview aria-label="正文预览"><button type="button" data-preview-close>关闭预览</button><article class="sl-markdown-content" data-preview-content></article></dialog>
+    <script>
+      // @ts-nocheck
+      import { mainCandidates, prepareUpload, uploadSourcePath } from '../../lib/live-upload.mjs';
+      import { renderNoteMarkdown } from '../../lib/note-markdown.mjs';
+      import { sanitizeNoteHtml } from '../../lib/live-markdown';
+      import { liveApiHeaders, liveApiUrl } from '../../lib/live-backend';
+      const base = document.body.dataset.base || '/';
+      const login = document.querySelector('[data-login]');
+      const editor = document.querySelector('[data-editor]');
+      const select = document.querySelector('[data-note]');
+      const versionSelect = document.querySelector('[data-version]');
+      const content = document.querySelector('[data-content]');
+      const status = document.querySelector('[data-status]');
+      let csrf = '';
+      let currentVersion = 0;
+      let notes = [];
+      const say = (text) => { status.textContent = text; };
+      const apiUrl = (url) => {
+        const path = new URL(url, location.origin).pathname;
+        const prefix = base.endsWith('/') ? base : `${base}/`;
+        return liveApiUrl(`/${path.startsWith(prefix) ? path.slice(prefix.length) : path.replace(/^\//, '')}`);
+      };
+      const api = async (url, options = {}) => {
+        const response = await fetch(apiUrl(url), { cache: 'no-store', credentials: 'omit', ...options,
+          headers: liveApiHeaders({ ...(options.body && !(options.body instanceof Blob) ? { 'content-type': 'application/json' } : {}), ...(options.method && options.method !== 'GET' ? { 'x-csrf-token': csrf } : {}), ...options.headers }) });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || `请求失败 (${response.status})`);
+        return data;
+      };
+      const flatten = (nodes) => nodes.flatMap((node) => [node, ...flatten(node.children || [])]);
+      const flattenNotes = (nodes) => nodes.flatMap((node) => node.kind === 'note' ? [node] : flattenNotes(node.children || []));
+      const parentSelect = document.querySelector('[data-parent]');
+      const categorySelect = document.querySelector('[data-category]');
+      const titleInput = document.querySelector('[data-title]');
+      const setAuthenticated = async () => {
+        const session = await api(`${base}api/admin/session`);
+        csrf = session.csrfToken || '';
+        login.hidden = session.authenticated;
+        editor.hidden = !session.authenticated;
+        if (session.authenticated) await loadTree();
+      };
+      async function loadTree() {
+        const data = await api(`${base}api/admin/taxonomy`);
+        const allNodes = flatten(data.tree);
+        notes = flattenNotes(data.tree);
+        select.replaceChildren(new Option('选择笔记…', ''));
+        for (const note of notes) {
+          const option = new Option(`${note.deleted ? '（回收站）' : ''}${note.title} · ${note.type}${note.version ? ` · v${note.version}` : ' · 未发布'}`, note.id);
+          select.add(option);
+        }
+        parentSelect.replaceChildren(new Option('顶层', ''));
+        for (const node of allNodes.filter((item) => item.kind === 'group' && !item.deleted)) parentSelect.add(new Option(`${'　'.repeat(node.path.split('/').length - 1)}${node.title}`, node.id));
+        categorySelect.replaceChildren(new Option('选择分类…', ''));
+        for (const node of allNodes.filter((item) => item.kind === 'group')) {
+          categorySelect.add(new Option(`${node.deleted ? '（回收站）' : ''}${'　'.repeat(node.path.split('/').length - 1)}${node.title}`, node.id));
+        }
+      }
+      async function loadNote() {
+        const note = notes.find((item) => item.id === select.value);
+        if (!note) return;
+        if (note.deleted) {
+          currentVersion = note.version || 0;
+          content.value = '';
+          document.querySelectorAll('[data-markdown-controls]').forEach((item) => { item.hidden = true; });
+          versionSelect.replaceChildren(new Option('回收站中的笔记', ''));
+          say(`${note.title} 在回收站中，可恢复后继续管理`);
+          return;
+        }
+        if (!note.version) {
+          currentVersion = 0;
+          content.value = '';
+          document.querySelectorAll('[data-markdown-controls]').forEach((item) => { item.hidden = note.type !== 'markdown'; });
+          versionSelect.replaceChildren(new Option('暂无历史版本', ''));
+          say(`${note.title} 已创建，上传主文件或编辑 Markdown 后发布第一版`);
+          return;
+        }
+        const data = await api(`${base}api/notes/${note.path.split('/').map(encodeURIComponent).join('/')}`);
+        currentVersion = data.version || 0;
+        content.value = data.markdown || '';
+        document.querySelectorAll('[data-markdown-controls]').forEach((item) => { item.hidden = note.type !== 'markdown'; });
+        say(`已载入 ${note.title} · ${note.type} · 版本 ${currentVersion}`);
+        await loadVersions(note);
+      }
+      async function loadVersions(note) {
+        const data = await api(`${base}api/admin/notes/${encodeURIComponent(note.id)}/versions`);
+        versionSelect.replaceChildren(new Option('版本历史…', ''));
+        for (const version of data.versions) versionSelect.add(new Option(`版本 ${version.version} · ${new Date(version.created_at).toLocaleString()}`, String(version.version)));
+      }
+      const reviewUpload = (files, mode, fixedType) => new Promise((resolve) => {
+        const dialog = document.querySelector('[data-upload-review]');
+        const primary = dialog.querySelector('[data-upload-primary]');
+        const candidates = mode === 'attachments' ? [] : mainCandidates(files, fixedType);
+        primary.replaceChildren(...candidates.map((file) => new Option(uploadSourcePath(file), uploadSourcePath(file))));
+        const preferred = candidates.find((file) => /^(?:note\.md|note\.docx)$/i.test(uploadSourcePath(file)));
+        if (preferred) primary.value = uploadSourcePath(preferred);
+        primary.parentElement.hidden = !candidates.length;
+        let result = null;
+        const update = () => {
+          try {
+            const type = fixedType || (primary.value ? /\.md$/i.test(primary.value) ? 'markdown' : 'docx' : 'gallery');
+            const prepared = prepareUpload(files, type, mode, primary.value);
+            result = { type, prepared };
+            dialog.querySelector('[data-upload-summary]').textContent = `${type} · ${prepared.length} 个文件 · ${(prepared.reduce((sum, entry) => sum + entry.file.size, 0) / 1024 / 1024).toFixed(1)} MB。${mode === 'folder' ? '完整替换当前文件集合；旧版本仍可恢复。' : '保留本次未更新的文件。'}`;
+            dialog.querySelector('[data-upload-files]').textContent = prepared.map(({ file, relative }) => `${uploadSourcePath(file)} → ${relative}`).join('\n');
+            dialog.querySelector('[data-upload-confirm]').disabled = false;
+          } catch (error) {
+            result = null; dialog.querySelector('[data-upload-summary]').textContent = error.message;
+            dialog.querySelector('[data-upload-confirm]').disabled = true;
+          }
+        };
+        primary.onchange = update; update();
+        dialog.returnValue = ''; dialog.showModal();
+        dialog.addEventListener('close', () => resolve(dialog.returnValue === 'confirm' ? result : null), { once: true });
+      });
+      const runUpload = async (files, mode, reviewed) => {
+        const note = notes.find((item) => item.id === select.value);
+        if (!note || !files.length) return;
+        const review = reviewed || await reviewUpload(files, mode, note.type);
+        if (!review) return;
+        const prepared = review.prepared;
+        const started = await api(`${base}api/admin/notes/${encodeURIComponent(note.id)}/uploads`, {
+          method: 'POST', body: JSON.stringify({ expectedVersion: currentVersion, mode, files: prepared.map(({ file, relative }) => ({ path: relative, size: file.size })) }),
+        });
+        for (let index = 0; index < prepared.length; index++) {
+          const { file, relative } = prepared[index];
+          say(`正在上传 ${index + 1}/${prepared.length}：${relative}`);
+          const uploadPath = `${base}api/admin/notes/${encodeURIComponent(note.id)}/uploads/${encodeURIComponent(started.operationId)}`;
+          const reserved = await api(`${uploadPath}?path=${encodeURIComponent(relative)}`, { method: 'POST', body: '{}' });
+          // Signed storage URL contains its own short-lived authorization, never the administrator token.
+          const uploaded = await fetch(reserved.signedUrl, { method: 'PUT', body: file, headers: { 'content-type': reserved.mime } });
+          if (!uploaded.ok) throw new Error(`文件上传失败 (${uploaded.status})：${relative}`);
+          await api(`${uploadPath}/complete`, { method: 'POST', body: JSON.stringify({ path: relative, size: file.size }) });
+
+        }
+        const published = await api(`${base}api/admin/notes/${encodeURIComponent(note.id)}/uploads/${encodeURIComponent(started.operationId)}/publish`, { method: 'POST', body: '{}' });
+        currentVersion = published.version;
+        say(`已发布版本 ${currentVersion}，${prepared.length} 个文件已更新`);
+        await loadVersions(note);
+        await loadTree();
+        select.value = note.id;
+        await loadNote();
+        say(`已发布版本 ${currentVersion}，${prepared.length} 个文件已更新`);
+      };
+      login.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        try {
+          const password = login.querySelector('input').value;
+          const data = await api(`${base}api/auth/login`, { method: 'POST', body: JSON.stringify({ password }) });
+          sessionStorage.setItem('notes-admin-session', data.accessToken);
+          csrf = data.csrfToken;
+          login.reset();
+          await setAuthenticated();
+          say('已登录');
+        } catch (error) { say(error.message); }
+      });
+      select.addEventListener('change', () => void loadNote().catch((error) => say(error.message)));
+      const mutateTaxonomy = async (payload) => api(`${base}api/admin/taxonomy`, { method: 'POST', body: JSON.stringify(payload) });
+      document.querySelector('[data-create-group]').addEventListener('click', async () => {
+        const title = titleInput.value.trim(); if (!title) return say('请输入分类名称');
+        try { const result = await mutateTaxonomy({ action: 'create-group', title, parentId: parentSelect.value || null }); await loadTree(); titleInput.value = ''; say(`分类“${result.title}”已创建`); }
+        catch (error) { say(error.message); }
+      });
+      document.querySelector('[data-create-note]').addEventListener('click', async () => {
+        const title = titleInput.value.trim(); if (!title || !parentSelect.value) return say('请输入笔记名称并选择所属分类');
+        try {
+          const result = await mutateTaxonomy({ action: 'create-note', title, parentId: parentSelect.value, noteType: document.querySelector('[data-note-type]').value });
+          await loadTree(); select.value = result.id; await loadNote(); titleInput.value = '';
+          say(`笔记“${result.title}”已创建，尚未公开；上传主文件或编辑后发布`);
+        } catch (error) { say(error.message); }
+      });
+      document.querySelector('[data-rename]').addEventListener('click', async () => {
+        const note = notes.find((item) => item.id === select.value); const title = titleInput.value.trim();
+        if (!note || !title) return say('先选择笔记并输入新名称');
+        try { await mutateTaxonomy({ action: 'rename', id: note.id, title }); await loadTree(); select.value = note.id; await loadNote(); titleInput.value = ''; say('笔记已重命名'); }
+        catch (error) { say(error.message); }
+      });
+      document.querySelector('[data-move]').addEventListener('click', async () => {
+        const note = notes.find((item) => item.id === select.value);
+        if (!note || !parentSelect.value) return say('先选择笔记和目标分类');
+        try { await mutateTaxonomy({ action: 'move', id: note.id, parentId: parentSelect.value }); await loadTree(); select.value = note.id; await loadNote(); say('笔记已移动'); }
+        catch (error) { say(error.message); }
+      });
+      document.querySelector('[data-delete]').addEventListener('click', async () => {
+        const note = notes.find((item) => item.id === select.value);
+        if (!note || !confirm(`将“${note.title}”移入回收站？已发布内容可恢复。`)) return;
+        try { await mutateTaxonomy({ action: 'delete', id: note.id }); await loadTree(); select.value = ''; content.value = ''; say('笔记已移入回收站'); }
+        catch (error) { say(error.message); }
+      });
+      document.querySelector('[data-restore-deleted]').addEventListener('click', async () => {
+        const note = notes.find((item) => item.id === select.value && item.deleted);
+        if (!note) return say('选择一条回收站笔记后再恢复');
+        try { await mutateTaxonomy({ action: 'restore', id: note.id }); await loadTree(); select.value = note.id; await loadNote(); say('笔记已恢复'); }
+        catch (error) { say(error.message); }
+      });
+      document.querySelector('[data-rename-category]').addEventListener('click', async () => {
+        const category = flatten(await api(`${base}api/admin/taxonomy`).then((data) => data.tree)).find((item) => item.id === categorySelect.value && item.kind === 'group');
+        const title = titleInput.value.trim();
+        if (!category || category.deleted || !title) return say('选择一个有效分类并输入新名称');
+        try { await mutateTaxonomy({ action: 'rename', id: category.id, title }); await loadTree(); categorySelect.value = category.id; titleInput.value = ''; say('分类已重命名'); }
+        catch (error) { say(error.message); }
+      });
+      document.querySelector('[data-move-category]').addEventListener('click', async () => {
+        const categoryId = categorySelect.value;
+        if (!categoryId) return say('请选择要移动的分类');
+        try { await mutateTaxonomy({ action: 'move', id: categoryId, parentId: parentSelect.value || null }); await loadTree(); categorySelect.value = categoryId; say('分类已移动'); }
+        catch (error) { say(error.message); }
+      });
+      document.querySelector('[data-delete-category]').addEventListener('click', async () => {
+        const categoryId = categorySelect.value;
+        const tree = await api(`${base}api/admin/taxonomy`);
+        const category = flatten(tree.tree).find((item) => item.id === categoryId && item.kind === 'group');
+        if (!category || category.deleted || !confirm(`将“${category.title}”及其下属全部笔记移入回收站？可整体恢复。`)) return;
+        try { await mutateTaxonomy({ action: 'delete', id: category.id }); await loadTree(); categorySelect.value = category.id; say('分类及其内容已移入回收站'); }
+        catch (error) { say(error.message); }
+      });
+      document.querySelector('[data-restore-category]').addEventListener('click', async () => {
+        const categoryId = categorySelect.value;
+        const tree = await api(`${base}api/admin/taxonomy`);
+        const category = flatten(tree.tree).find((item) => item.id === categoryId && item.kind === 'group');
+        if (!category || !category.deleted) return say('请选择回收站中的分类');
+        try { await mutateTaxonomy({ action: 'restore', id: category.id }); await loadTree(); categorySelect.value = category.id; say('分类及其内容已恢复'); }
+        catch (error) { say(error.message); }
+      });
+      document.querySelector('[data-refresh]').addEventListener('click', () => void loadNote().catch((error) => say(error.message)));
+      document.querySelector('[data-restore]').addEventListener('click', async () => {
+        const note = notes.find((item) => item.id === select.value);
+        const targetVersion = Number(versionSelect.value);
+        if (!note || !Number.isInteger(targetVersion) || targetVersion < 1) return say('请选择要恢复的历史版本');
+        try {
+          const result = await api(`${base}api/admin/notes/${encodeURIComponent(note.id)}/restore`, {
+            method: 'POST', body: JSON.stringify({ expectedVersion: currentVersion, targetVersion }),
+          });
+          currentVersion = result.version;
+          await loadNote();
+          say(`已恢复到版本 ${currentVersion}`);
+        } catch (error) { say(error.message); }
+      });
+      document.querySelector('[data-save]').addEventListener('click', async () => {
+        const note = notes.find((item) => item.id === select.value);
+        if (!note) return say('请先选择笔记');
+        try {
+          const data = await api(`${base}api/admin/notes/${encodeURIComponent(note.id)}/markdown`, {
+            method: 'PUT', body: JSON.stringify({ expectedVersion: currentVersion, content: content.value }),
+          });
+          currentVersion = data.version;
+          say(`已发布版本 ${currentVersion}，${data.passageCount} 个搜索段落已更新`);
+          await loadVersions(note);
+        } catch (error) { say(error.message); }
+      });
+      document.querySelector('[data-logout]').addEventListener('click', async () => {
+        try { await api(`${base}api/auth/logout`, { method: 'POST', body: '{}' }); } catch {}
+        sessionStorage.removeItem('notes-admin-session'); csrf = ''; editor.hidden = true; login.hidden = false; say('已退出');
+      });
+      const wrapSelection = (before, after = before) => {
+        const start = content.selectionStart; const end = content.selectionEnd;
+        if (start === end) return;
+        const selected = content.value.slice(start, end);
+        content.setRangeText(`${before}${selected}${after}`, start, end, 'select'); content.focus();
+      };
+      document.querySelectorAll('[data-wrap]').forEach((button) => button.addEventListener('click', () => wrapSelection(button.dataset.wrap)));
+      document.querySelector('[data-mark]').addEventListener('click', () => wrapSelection('<mark>', '</mark>'));
+      document.querySelectorAll('[data-bg]').forEach((button) => button.addEventListener('click', () => {
+        const colors = { yellow: '#fff2a8', green: '#d7f5dd', blue: '#d9ecff' };
+        wrapSelection(`<span style="background-color: ${colors[button.dataset.bg]}">`, '</span>');
+      }));
+      document.querySelector('[data-insert]').addEventListener('click', (event) => {
+        const start = content.selectionStart; const end = content.selectionEnd;
+        content.setRangeText(event.currentTarget.dataset.insert, start, end, 'end'); content.focus();
+      });
+      const preview = document.querySelector('[data-note-preview]');
+      document.querySelector('[data-preview]').addEventListener('click', () => {
+        preview.querySelector('[data-preview-content]').innerHTML = sanitizeNoteHtml(renderNoteMarkdown(content.value));
+        preview.showModal();
+      });
+      document.querySelector('[data-preview-close]').addEventListener('click', () => preview.close());
+      const uploadInputs = { main: '[data-upload-main]', 'main-media': '[data-upload-main-media]', attachments: '[data-upload-attachments]', folder: '[data-upload-folder]' };
+      uploadInputs['new-folder'] = '[data-upload-new-folder]';
+      for (const mode of ['main-media', 'folder', 'new-folder']) {
+        document.querySelector(uploadInputs[mode]).setAttribute('webkitdirectory', '');
+        document.querySelector(uploadInputs[mode]).setAttribute('directory', '');
+      }
+      document.querySelectorAll('[data-pick]').forEach((button) => button.addEventListener('click', () => document.querySelector(uploadInputs[button.dataset.pick]).click()));
+      for (const [mode, selector] of Object.entries(uploadInputs)) {
+        const input = document.querySelector(selector);
+        input.addEventListener('change', async () => {
+          try {
+            const files = [...input.files];
+            if (mode === 'new-folder' && files.length) {
+              const review = await reviewUpload(files, 'folder');
+              if (!review) return;
+              const noteType = review.type;
+              const parentId = parentSelect.value;
+              if (!parentId) throw new Error('请先选择新笔记所属分类');
+              const folderTitle = files[0].webkitRelativePath?.split('/')[0] || '';
+              const title = titleInput.value.trim() || folderTitle;
+              if (!title) throw new Error('无法识别文件夹名称，请填写笔记名称');
+              say(`已识别为 ${noteType === 'markdown' ? 'Markdown' : noteType === 'docx' ? 'Word' : '图片集'}，正在创建笔记…`);
+              const result = await mutateTaxonomy({ action: 'create-note', title, parentId, noteType });
+              await loadTree(); select.value = result.id; currentVersion = 0; content.value = '';
+              await runUpload(files, 'folder', review);
+              titleInput.value = '';
+            } else await runUpload(files, mode);
+          }
+          catch (error) { say(error.message); }
+          finally { input.value = ''; }
+        });
+      }
+      void setAuthenticated().catch((error) => { login.hidden = false; say(`在线管理尚未就绪：${error.message}`); });
+    </script>
+  </body>
+</html>

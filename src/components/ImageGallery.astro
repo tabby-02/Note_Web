@@ -6,12 +6,12 @@ import AttachmentList from './AttachmentList.astro';
 import DirectoryToggle from './DirectoryToggle.astro';
 import DirectoryResize from './DirectoryResize.astro';
 
-const { leafPath } = Astro.props;
+const { leafPath = '', runtimeOnly = false } = Astro.props;
 const root = path.resolve(process.cwd(), 'notes', ...leafPath.split('/'), 'chapters');
 const siteBase = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
 const base = `${siteBase}library/${leafPath}/chapters/`;
 let pageNumber = 0;
-const gallery = inspectGallery(root);
+const gallery = runtimeOnly ? { issues: [], chapters: [] } : inspectGallery(root);
 if (gallery.issues.length) throw new Error(gallery.issues.join('\n'));
 const chapters = gallery.chapters.map((chapter, index) => ({
     title: chapter.title,
@@ -21,7 +21,7 @@ const chapters = gallery.chapters.map((chapter, index) => ({
 const totalImages = pageNumber;
 ---
 
-<div class="gallery-layout" data-image-gallery data-gallery-total={totalImages}>
+<div class="gallery-layout" data-image-gallery data-gallery-total={totalImages} data-note-id={leafPath.split('/').at(-1)}>
   <nav class="note-outline" data-note-outline aria-label="图片章节">
     <div class="directory-header">
       <span class="directory-title">章节目录 <small>{chapters.length}</small></span>
@@ -63,7 +63,7 @@ const totalImages = pageNumber;
       <button type="button" data-gallery-next aria-label="下一页" title="下一页"><ChevronDown size={18} aria-hidden="true" /></button>
     </div>
   </div>
-  <AttachmentList leafPath={leafPath} />
+  <AttachmentList leafPath={leafPath} runtimeOnly={runtimeOnly} />
   <dialog class="image-lightbox" data-gallery-dialog aria-label="笔记图片放大预览" data-pagefind-ignore>
     <button class="lightbox-close" type="button" data-gallery-close aria-label="关闭大图" title="关闭 (Esc)"><X size={19} aria-hidden="true" /></button>
     <img data-gallery-large alt="" />
@@ -71,7 +71,79 @@ const totalImages = pageNumber;
 </div>
 
 <script>
-  document.querySelectorAll<HTMLElement>('[data-image-gallery]').forEach((root) => {
+  import { getLiveNote, applyLiveNote } from '../lib/live-backend';
+  type GalleryAsset = { relative_path: string; url: string };
+  type GalleryNode = { id: string; path: string; children?: GalleryNode[] };
+  const flatten = (nodes: GalleryNode[]): GalleryNode[] => nodes.flatMap((node) => [node, ...flatten(node.children ?? [])]);
+
+  function renderGalleryAssets(root: HTMLElement, assets: GalleryAsset[]) {
+    const grouped = new Map<string, GalleryAsset[]>();
+    for (const asset of assets) {
+      const relative = asset.relative_path.replace(/^chapters\//, '');
+      const folder = relative.includes('/') ? relative.slice(0, relative.lastIndexOf('/')) : '';
+      const list = grouped.get(folder) ?? [];
+      list.push(asset);
+      grouped.set(folder, list);
+    }
+    const collator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' });
+    const groups = [...grouped].sort(([a], [b]) => collator.compare(a, b));
+    const links = root.querySelector<HTMLElement>('.chapter-list');
+    const stream = root.querySelector<HTMLElement>('.gallery-stream');
+    if (!links || !stream) return;
+    links.replaceChildren();
+    stream.querySelectorAll('[data-gallery-chapter]').forEach((chapter) => chapter.remove());
+    let number = 0;
+    for (const [index, [folder, chapterAssets]] of groups.entries()) {
+      const title = folder ? folder.split('/').map((part) => part.replace(/^\d+[-.、\s]*/, '') || part).join(' / ') : '总览';
+      const chapterId = `gallery-chapter-${index}`;
+      const link = document.createElement('a');
+      link.className = `chapter-button${index === 0 ? ' is-active' : ''}`;
+      link.href = `#${chapterId}`;
+      link.dataset.chapterIndex = String(index);
+      link.title = title;
+      const linkName = document.createElement('span'); linkName.textContent = title;
+      const count = document.createElement('small'); count.textContent = String(chapterAssets.length);
+      link.append(linkName, count); links.append(link);
+
+      const section = document.createElement('section'); section.className = 'gallery-chapter'; section.id = chapterId;
+      section.dataset.galleryChapter = ''; section.dataset.chapterTitle = title;
+      const heading = document.createElement('header'); heading.className = 'gallery-chapter-heading';
+      const h2 = document.createElement('h2'); h2.textContent = title;
+      const headingCount = document.createElement('span'); headingCount.textContent = `${chapterAssets.length} 页`;
+      heading.append(h2, headingCount);
+      const pages = document.createElement('div'); pages.className = 'gallery-pages';
+      for (const asset of chapterAssets.sort((a, b) => collator.compare(a.relative_path, b.relative_path))) {
+        const pageNumber = ++number;
+        const filename = asset.relative_path.split('/').at(-1) ?? '';
+        const page = document.createElement('figure'); page.className = 'gallery-page'; page.id = `gallery-page-${pageNumber}`;
+        page.dataset.galleryPage = ''; page.dataset.chapter = String(index);
+        const button = document.createElement('button'); button.className = 'gallery-page-image'; button.type = 'button';
+        button.dataset.galleryZoom = ''; button.dataset.galleryUrl = asset.url; button.dataset.galleryName = `${title} · 第 ${pageNumber} 页`;
+        button.setAttribute('aria-label', `放大查看 ${title} 第 ${pageNumber} 页`);
+        const image = document.createElement('img'); image.src = asset.url; image.alt = `${title} 第 ${pageNumber} 页`; image.loading = pageNumber === 1 ? 'eager' : 'lazy'; image.decoding = 'async';
+        button.append(image);
+        const caption = document.createElement('figcaption');
+        const pageLabel = document.createElement('span'); pageLabel.textContent = `第 ${pageNumber} / ${assets.length} 页`;
+        const fileLabel = document.createElement('span'); fileLabel.textContent = filename; fileLabel.title = filename;
+        caption.append(pageLabel, fileLabel); page.append(button, caption); pages.append(page);
+      }
+      section.append(heading, pages); stream.append(section);
+    }
+    root.dataset.galleryTotal = String(number);
+    const intro = stream.querySelector<HTMLElement>('.gallery-intro');
+    if (intro) intro.textContent = `${groups.length} 个章节 · ${number} 页，向下滚动连续阅读，点击图片可放大。`;
+  }
+
+  async function hydrateGallery(root: HTMLElement) {
+    const note = await getLiveNote(root);
+    if (!note?.assets) return;
+    applyLiveNote(root, note);
+    renderGalleryAssets(root, note.assets.filter((asset) => asset.role === 'gallery-image'));
+  }
+
+  function initializeGallery(root: HTMLElement) {
+    if (root.dataset.galleryReady === 'true') return;
+    root.dataset.galleryReady = 'true';
     const pages = [...root.querySelectorAll<HTMLElement>('[data-gallery-page]')];
     const links = [...root.querySelectorAll<HTMLAnchorElement>('[data-chapter-index]')];
     const chapters = [...root.querySelectorAll<HTMLElement>('[data-gallery-chapter]')];
@@ -122,6 +194,10 @@ const totalImages = pageNumber;
     window.addEventListener('scroll', () => { if (!scheduled) { scheduled = true; requestAnimationFrame(update); } }, { passive: true });
     new ResizeObserver(update).observe(root);
     update();
+  }
+
+  document.querySelectorAll<HTMLElement>('[data-image-gallery]').forEach((root) => {
+    void hydrateGallery(root).catch((error) => console.error('Could not load the published gallery version', error)).finally(() => initializeGallery(root));
   });
 </script>
 

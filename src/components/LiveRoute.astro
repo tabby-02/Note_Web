@@ -1,0 +1,11 @@
+  <p data-live-route-status>正在查询在线知识目录。</p>
+  <script>
+    import { getLiveTree, flattenLiveTree, liveReaderUrl } from '../lib/live-backend';
+    const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+    const path = decodeURIComponent(location.pathname).replace(base, '').replace(/^notes\//, '').replace(/\/$/, '');
+    void getLiveTree().then((result) => {
+      const note = flattenLiveTree(result?.tree ?? []).find((node) => node.kind === 'note' && node.path === path);
+      if (note) location.replace(liveReaderUrl(note, decodeURIComponent(location.hash.slice(1))));
+      else document.querySelector('[data-live-route-status]')!.textContent = '未找到这篇笔记，或在线服务暂时不可用。请从左侧知识目录重新选择。';
+    });
+  </script>

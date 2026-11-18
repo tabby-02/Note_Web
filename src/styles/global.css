@@ -183,3 +183,5 @@ button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px soli
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
 }
+
+.attachment-dock[hidden] { display: none !important; }

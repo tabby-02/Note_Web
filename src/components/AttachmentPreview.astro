@@ -95,8 +95,11 @@ import { Download, X } from '@lucide/astro';
       }
     }
   };
-  document.querySelectorAll<HTMLElement>('[data-attachment-open]').forEach((trigger) => {
-    trigger.addEventListener('click', (event) => { event.preventDefault(); void showFile(trigger); });
+  document.addEventListener('click', (event) => {
+    const trigger = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-attachment-open]') : null;
+    if (!trigger) return;
+    event.preventDefault();
+    void showFile(trigger);
   });
   dialog?.querySelector('[data-attachment-close]')?.addEventListener('click', () => dialog.close());
   dialog?.addEventListener('click', (event) => {

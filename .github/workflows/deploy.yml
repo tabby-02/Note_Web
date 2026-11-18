@@ -28,11 +28,15 @@ jobs:
       - run: npm run check
       - run: npm run test:markdown
       - run: npm run test:reading
+      - run: npm run supabase:check
+      - run: npm run supabase:import:dry
       - run: npm run test:search
       - run: npm run test:manager
       - run: npm run build
         env:
           GITHUB_PAGES: 'true'
+          PUBLIC_SUPABASE_URL: https://qsfwywubqvahisqprvxu.supabase.co
+          PUBLIC_SUPABASE_KEY: sb_publishable_fFP0rqBd5fVevPdognSm9g_yFufY_qG
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

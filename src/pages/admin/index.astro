@@ -10,89 +10,134 @@ const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL :
     <meta name="robots" content="noindex, nofollow" />
     <title>笔记管理</title>
     <style>
-      dialog { max-width: min(1000px, 90vw); max-height: 85vh; padding: 24px; border: 1px solid #8886; border-radius: 10px; }
-      dialog::backdrop { background: #0008; }
-      dialog pre { max-height: 45vh; overflow: auto; font-size: .8rem; }
+      :root { color-scheme: light dark; font-family: Inter, "Microsoft YaHei", system-ui, sans-serif; --admin-bg: #f4f7f5; --admin-panel: #fff; --admin-line: #d7e1db; --admin-muted: #637268; --admin-accent: #26765a; --admin-accent-soft: #e2f0e9; }
+      @media (prefers-color-scheme: dark) { :root { --admin-bg: #121a16; --admin-panel: #1b2620; --admin-line: #36453c; --admin-muted: #a4b4aa; --admin-accent: #72d2a6; --admin-accent-soft: #203b2f; } }
+      * { box-sizing: border-box; }
+      body { max-width: 1380px; min-height: 100vh; margin: 0 auto; padding: 1.5rem clamp(1rem, 3vw, 3rem) 4rem; background: var(--admin-bg); color: CanvasText; }
+      header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-bottom: 1.1rem; border-bottom: 1px solid var(--admin-line); }
+      header h1 { margin: 0; color: var(--admin-accent); font-size: clamp(1.25rem, 2vw, 1.7rem); letter-spacing: .02em; }
+      header p { margin: .25rem 0 0; color: var(--admin-muted); font-size: .78rem; }
+      header a { color: var(--admin-accent); font-size: .8rem; font-weight: 650; text-decoration: none; }
+      header a:hover { text-decoration: underline; }
+      h2, h3 { margin: 0; }
+      button, input, select, textarea { font: inherit; color: inherit; }
+      button, select, input { min-height: 2.25rem; padding: .5rem .7rem; border: 1px solid var(--admin-line); border-radius: 6px; background: var(--admin-panel); }
+      button { cursor: pointer; font-size: .8rem; font-weight: 600; }
+      button:hover { border-color: var(--admin-accent); background: var(--admin-accent-soft); }
+      button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--admin-accent); outline-offset: 2px; }
+      label { display: grid; gap: .35rem; color: var(--admin-muted); font-size: .76rem; font-weight: 600; }
+      .login { display: grid; grid-template-columns: minmax(0, 24rem) auto; align-items: end; gap: .75rem; max-width: 34rem; margin: 4rem auto; padding: 1.5rem; border: 1px solid var(--admin-line); border-radius: 10px; background: var(--admin-panel); box-shadow: 0 10px 35px #09201614; }
+      .login::before { grid-column: 1 / -1; content: '登录后可管理在线笔记、版本和上传资源'; color: var(--admin-accent); font-size: 1rem; font-weight: 750; }
+      .status { min-height: 1.5rem; margin: .9rem 0; color: var(--admin-muted); font-size: .8rem; }
+      [hidden] { display: none !important; }
+      .admin-toolbar { display: grid; grid-template-columns: minmax(14rem, 1.4fr) auto minmax(12rem, 1fr) auto auto; align-items: end; gap: .7rem; margin: 1.1rem 0; padding: 1rem; border: 1px solid var(--admin-line); border-radius: 9px; background: var(--admin-panel); }
+      .admin-toolbar label { min-width: 0; }
+      .admin-toolbar .toolbar-heading { grid-column: 1 / -1; display: flex; align-items: baseline; justify-content: space-between; gap: .75rem; }
+      .admin-toolbar .toolbar-heading h2 { color: var(--admin-accent); font-size: .95rem; }
+      .admin-toolbar .toolbar-heading span { color: var(--admin-muted); font-size: .7rem; }
+      .workspace { display: grid; grid-template-columns: minmax(18rem, .7fr) minmax(0, 1.8fr); align-items: start; gap: 1rem; }
+      .panel { min-width: 0; padding: 1rem; border: 1px solid var(--admin-line); border-radius: 9px; background: var(--admin-panel); }
+      .panel-heading { display: flex; align-items: baseline; justify-content: space-between; gap: .8rem; margin-bottom: .8rem; }
+      .panel-heading h2 { color: var(--admin-accent); font-size: .92rem; }
+      .panel-heading p { margin: 0; color: var(--admin-muted); font-size: .7rem; }
+      .taxonomy-tools { display: grid; gap: .7rem; }
+      .taxonomy-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .7rem; }
+      .actions, .upload-controls { display: flex; flex-wrap: wrap; gap: .45rem; }
+      .action-group { display: grid; gap: .45rem; padding-top: .75rem; border-top: 1px solid var(--admin-line); }
+      .action-group small { color: var(--admin-muted); font-size: .68rem; }
+      .danger-zone { border-top-color: #c77a7a; }
+      .danger-zone button { color: #ad4646; }
+      .editor-panel { display: grid; gap: .75rem; }
+      .editor-tools { display: flex; align-items: center; justify-content: space-between; gap: .6rem; flex-wrap: wrap; padding-bottom: .7rem; border-bottom: 1px solid var(--admin-line); }
+      .editor-tools .actions { gap: .35rem; }
+      .editor-tools button[data-save] { border-color: var(--admin-accent); background: var(--admin-accent); color: white; }
+      textarea { width: 100%; min-height: min(70vh, 58rem); resize: vertical; padding: 1rem; border: 1px solid var(--admin-line); border-radius: 7px; background: color-mix(in srgb, var(--admin-panel) 82%, var(--admin-bg)); font: .86rem/1.75 "Cascadia Code", Consolas, monospace; tab-size: 2; }
+      .upload-controls { padding-top: .7rem; border-top: 1px solid var(--admin-line); }
+      dialog { width: min(70rem, calc(100vw - 2rem)); max-height: 88vh; padding: 1.25rem; border: 1px solid var(--admin-line); border-radius: 10px; background: var(--admin-panel); color: CanvasText; box-shadow: 0 20px 70px #0005; }
+      dialog::backdrop { background: #07150e99; backdrop-filter: blur(2px); }
+      dialog pre { max-height: 48vh; overflow: auto; padding: .8rem; border-radius: 6px; background: var(--admin-bg); color: var(--admin-muted); font-size: .76rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+      dialog h2 { margin-bottom: .7rem; color: var(--admin-accent); font-size: 1.05rem; }
       [data-preview-content] { min-width: min(700px, 75vw); overflow-wrap: anywhere; line-height: 1.8; }
       [data-preview-content] img { max-width: 100%; }
-      :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
-      body { max-width: 1100px; margin: 0 auto; padding: 24px; background: Canvas; color: CanvasText; }
-      header, .toolbar, .actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-      header { justify-content: space-between; border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, transparent); margin-bottom: 18px; }
-      h1 { font-size: 1.3rem; }
-      label { display: grid; gap: 6px; font-size: .9rem; }
-      input, select, textarea, button { font: inherit; color: inherit; background: Canvas; border: 1px solid color-mix(in srgb, CanvasText 35%, transparent); border-radius: 4px; padding: 8px 10px; }
-      button { cursor: pointer; }
-      .login { display: flex; gap: 8px; align-items: end; margin: 36px auto; max-width: 520px; }
-      .login label { flex: 1; }
-      .toolbar { margin: 16px 0; }
-      .taxonomy-tools { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); align-items: end; gap: 10px; margin: 14px 0; padding: 12px 0; border-block: 1px solid color-mix(in srgb, CanvasText 18%, transparent); }
-      .taxonomy-tools label { min-width: 0; }
-      .toolbar label { min-width: 220px; }
-      textarea { width: 100%; min-height: 65vh; box-sizing: border-box; resize: vertical; font: 14px/1.6 ui-monospace, monospace; tab-size: 2; }
-      .status { min-height: 1.5em; color: color-mix(in srgb, CanvasText 72%, transparent); }
-      [hidden] { display: none !important; }
-      @media (max-width: 760px) { .taxonomy-tools { grid-template-columns: 1fr 1fr; } }
-      @media (max-width: 600px) { body { padding: 14px; } .login { align-items: stretch; flex-direction: column; } textarea { min-height: 55vh; } .taxonomy-tools { grid-template-columns: 1fr; } }
+      @media (max-width: 980px) { .admin-toolbar { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); } .admin-toolbar .toolbar-heading, .admin-toolbar > [data-logout] { grid-column: 1 / -1; } .workspace { grid-template-columns: 1fr; } }
+      @media (max-width: 620px) { body { padding: 1rem .75rem 3rem; } .login { grid-template-columns: 1fr; margin: 2rem auto; } .login::before { grid-column: auto; } .admin-toolbar { grid-template-columns: 1fr; } .admin-toolbar .toolbar-heading, .admin-toolbar > [data-logout] { grid-column: auto; } .taxonomy-fields { grid-template-columns: 1fr; } textarea { min-height: 55vh; font-size: .8rem; } .panel { padding: .8rem; } }
     </style>
   </head>
   <body data-base={base}>
-    <header><h1>笔记管理</h1><a href={base}>返回阅读</a></header>
+    <header><div><h1>笔记管理</h1><p>在线内容、知识目录与版本维护</p></div><a href={base}>返回阅读</a></header>
     <form class="login" data-login>
       <label>管理员密码<input type="password" autocomplete="current-password" required minlength="1" /></label>
       <button>登录</button>
     </form>
     <p class="status" role="status" aria-live="polite" data-status></p>
     <main data-editor hidden>
-      <div class="toolbar">
+      <section class="admin-toolbar" aria-label="当前笔记与版本">
+        <div class="toolbar-heading"><h2>当前工作区</h2><span>保存后立即切换在线活动版本</span></div>
         <label>选择笔记<select data-note><option value="">加载笔记目录…</option></select></label>
         <button type="button" data-refresh>重新载入</button>
         <label>历史版本<select data-version><option value="">加载历史…</option></select></label>
         <button type="button" data-restore>恢复所选版本</button>
         <button type="button" data-logout>退出</button>
-      </div>
-      <section class="taxonomy-tools" aria-label="知识目录管理">
-        <label>名称<input data-title maxlength="120" placeholder="分类或笔记名称" /></label>
-        <label>所属/目标分类<select data-parent><option value="">顶层</option></select></label>
-        <label>选择分类<select data-category><option value="">选择分类…</option></select></label>
-        <label>笔记类型<select data-note-type><option value="markdown">Markdown</option><option value="docx">Word</option><option value="gallery">图片集</option></select></label>
-        <div class="actions">
+      </section>
+      <div class="workspace">
+      <aside class="panel taxonomy-panel" aria-label="知识目录管理">
+        <div class="panel-heading"><h2>知识目录</h2><p>新建、整理和回收</p></div>
+        <section class="taxonomy-tools">
+          <div class="taxonomy-fields">
+            <label>名称<input data-title maxlength="120" placeholder="分类或笔记名称" /></label>
+            <label>笔记类型<select data-note-type><option value="markdown">Markdown</option><option value="docx">Word</option><option value="gallery">图片集</option></select></label>
+            <label>所属/目标分类<select data-parent><option value="">顶层</option></select></label>
+            <label>选择分类<select data-category><option value="">选择分类…</option></select></label>
+          </div>
+          <div class="action-group"><small>创建与导入</small><div class="actions">
           <button type="button" data-create-group>新建分类</button>
           <button type="button" data-create-note>新建笔记</button>
           <button type="button" data-pick="new-folder">导入新文件夹</button>
+          </div></div>
+          <div class="action-group"><small>整理当前选择</small><div class="actions">
           <button type="button" data-rename>重命名所选笔记</button>
           <button type="button" data-move>移动所选笔记</button>
-          <button type="button" data-delete>移入回收站</button>
           <button type="button" data-restore-deleted>恢复所选笔记</button>
           <button type="button" data-rename-category>重命名所选分类</button>
           <button type="button" data-move-category>移动所选分类</button>
+          </div></div>
+          <div class="action-group danger-zone"><small>回收站</small><div class="actions">
+          <button type="button" data-delete>移入回收站</button>
           <button type="button" data-delete-category>移入回收站分类</button>
           <button type="button" data-restore-category>恢复所选分类</button>
+          </div></div>
+        </section>
+      </aside>
+      <section class="panel editor-panel" aria-label="笔记编辑与上传">
+        <div class="panel-heading"><h2>内容工作区</h2><p>复杂改动在这里完成，轻量标注可在阅读页完成</p></div>
+        <div class="editor-tools">
+          <div class="actions" data-markdown-controls aria-label="文本格式">
+            <button type="button" data-preview>预览正文</button>
+            <button type="button" data-wrap="**">加粗</button>
+            <button type="button" data-mark>高亮</button>
+            <button type="button" data-bg="yellow">黄色底色</button>
+            <button type="button" data-bg="green">绿色底色</button>
+            <button type="button" data-bg="blue">蓝色底色</button>
+            <button type="button" data-wrap="`">行内代码</button>
+            <button type="button" data-insert="$$\n\n$$">公式</button>
+          </div>
+          <div class="actions" data-markdown-controls><button type="button" data-save>保存并立即发布</button></div>
         </div>
+        <textarea data-content data-markdown-controls spellcheck="false" aria-label="Markdown 正文"></textarea>
+        <div class="action-group"><small>文件更新方式</small>
+        <div class="upload-controls" aria-label="上传笔记文件">
+          <button type="button" data-pick="main">更新主文件</button>
+          <button type="button" data-pick="main-media">主文件和图片文件夹</button>
+          <button type="button" data-pick="attachments">仅上传附件</button>
+          <button type="button" data-pick="folder">整个文件夹重新识别</button>
+          <input hidden type="file" data-upload-main accept=".md,.docx" />
+          <input hidden type="file" data-upload-main-media multiple />
+          <input hidden type="file" data-upload-attachments multiple />
+          <input hidden type="file" data-upload-folder multiple />
+          <input hidden type="file" data-upload-new-folder multiple />
+        </div></div>
       </section>
-      <div class="actions" data-markdown-controls aria-label="文本格式">
-        <button type="button" data-preview>预览正文</button>
-        <button type="button" data-wrap="**">加粗</button>
-        <button type="button" data-mark>高亮</button>
-        <button type="button" data-bg="yellow">黄色底色</button>
-        <button type="button" data-bg="green">绿色底色</button>
-        <button type="button" data-bg="blue">蓝色底色</button>
-        <button type="button" data-wrap="`">行内代码</button>
-        <button type="button" data-insert="$$\n\n$$">公式</button>
       </div>
-      <div class="upload-controls" aria-label="上传笔记文件">
-        <button type="button" data-pick="main">更新主文件</button>
-        <button type="button" data-pick="main-media">主文件和图片文件夹</button>
-        <button type="button" data-pick="attachments">仅上传附件</button>
-        <button type="button" data-pick="folder">整个文件夹重新识别</button>
-        <input hidden type="file" data-upload-main accept=".md,.docx" />
-        <input hidden type="file" data-upload-main-media multiple />
-        <input hidden type="file" data-upload-attachments multiple />
-        <input hidden type="file" data-upload-folder multiple />
-        <input hidden type="file" data-upload-new-folder multiple />
-      </div>
-      <textarea data-content data-markdown-controls spellcheck="false" aria-label="Markdown 正文"></textarea>
-      <div class="actions" data-markdown-controls><button type="button" data-save>保存并立即发布</button></div>
     </main>
     <dialog data-upload-review aria-label="确认上传清单">
       <form method="dialog">

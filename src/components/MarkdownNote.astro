@@ -7,6 +7,7 @@ import { createNoteMarkdownParser, renderNoteMarkdown, resolveHeadingFragment } 
 import { markdownSearchPassages } from '../lib/note-search.mjs';
 import NoteOutline from './NoteOutline.astro';
 import AttachmentList from './AttachmentList.astro';
+import InlineNoteEditor from './InlineNoteEditor.astro';
 
 const { leafPath = '', runtimeOnly = false } = Astro.props;
 const root = path.resolve(process.cwd(), 'notes', ...leafPath.split('/'));
@@ -105,6 +106,7 @@ for (const heading of toc) {
 
 {(runtimeOnly || outline.length > 0) && <NoteOutline headings={outline} />}
 <div class="note-reading-layout" data-search-note={leafPath} data-note-id={leafPath.split('/').at(-1)}>
+  <InlineNoteEditor />
   <article class="note-prose sl-markdown-content" set:html={html} />
   <AttachmentList leafPath={leafPath} exclude={[...referenced]} runtimeOnly={runtimeOnly} />
 </div>
@@ -121,86 +123,61 @@ for (const heading of toc) {
     return value.replaceAll('\\', '/').replace(/^\/+/, '').replace(/^\.\//, '');
   };
 
+  const renderLiveNote = async (layout: HTMLElement, note: any) => {
+    const article = layout.querySelector<HTMLElement>('.note-prose');
+    if (!article || typeof note.markdown !== 'string') return;
+    const normalizedMarkdown = note.markdown.replace(/(^|\n)(\s*<img\b[^>\r\n]*>)[ \t]*(?=\n|$)/gim, '$1$2\n');
+    article.innerHTML = sanitizeNoteHtml(renderNoteMarkdown(normalizedMarkdown));
+    const assets = new Map<string, string>((note.assets ?? []).map((asset: any) => [localPath(asset.relative_path), String(asset.url)] as [string, string]));
+    const resolveAsset = (source: string): string | undefined => {
+      if (/^(?:[a-z]+:|\/\/|#|data:)/i.test(source)) return undefined;
+      const normalized = localPath(source);
+      return assets.get(normalized) ?? assets.get(`media/${normalized}`) ?? assets.get(`attachments/${normalized}`) ?? assets.get(normalized.replace(/^\.\.\//, ''));
+    };
+    article.querySelectorAll<HTMLImageElement>('img[src]').forEach((image) => {
+      const url = resolveAsset(image.getAttribute('src') ?? '');
+      if (url) { image.src = url; image.loading = 'lazy'; image.decoding = 'async'; }
+    });
+    article.querySelectorAll<HTMLAnchorElement>('a[href]').forEach((link) => {
+      const url = resolveAsset(link.getAttribute('href') ?? '');
+      if (url) { link.href = url; link.dataset.attachmentOpen = ''; link.dataset.attachmentUrl = url; }
+    });
+    assignBrowserPassages(article);
+    const headingTargets = [...article.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6')].map((element) => ({ id: element.id, text: element.textContent ?? '' }));
+    article.querySelectorAll<HTMLAnchorElement>('a[href^="#"]').forEach((link) => {
+      const target = resolveHeadingFragment(link.hash, headingTargets);
+      if (target) link.href = `#${target}`;
+    });
+    const outline = document.querySelector<HTMLElement>('[data-outline-tree]');
+    if (outline) {
+      const headings = [...article.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6')].map((element) => ({ id: element.id, text: element.textContent?.trim() ?? '', level: Number(element.tagName.slice(1)), children: [] as any[] }));
+      const roots: typeof headings = []; const stack: typeof headings = [];
+      for (const heading of headings) { while (stack.length && stack.at(-1)!.level >= heading.level) stack.pop(); if (stack.length) stack.at(-1)!.children.push(heading); else roots.push(heading); stack.push(heading); }
+      const firstLevel = headings.length ? Math.min(...headings.map((heading) => heading.level)) : 1;
+      const build = (entries: typeof headings, nested = false): HTMLUListElement => {
+        const list = document.createElement('ul'); if (nested) list.dataset.outlineChildren = '';
+        for (const entry of entries) {
+          const item = document.createElement('li'); item.dataset.outlineItem = ''; item.dataset.level = String(entry.level); item.dataset.depth = String(entry.level - firstLevel);
+          const row = document.createElement('div'); row.className = 'outline-row'; row.style.setProperty('--outline-depth', String(entry.level - firstLevel));
+          if (entry.children.length) { const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'outline-branch-toggle'; toggle.dataset.outlineBranch = ''; toggle.setAttribute('aria-expanded', String(entry.level === firstLevel)); toggle.setAttribute('aria-label', `${entry.level === firstLevel ? '收起' : '展开'}${entry.text}的子目录`); toggle.title = entry.level === firstLevel ? '收起子目录' : '展开子目录'; const icon = document.createElement('span'); icon.className = 'outline-branch-icon'; icon.setAttribute('aria-hidden', 'true'); icon.textContent = '⌄'; toggle.append(icon); row.append(toggle); }
+          const link = document.createElement('a'); link.href = `#${entry.id}`; link.title = entry.text; link.textContent = entry.text; row.append(link); item.append(row);
+          if (entry.children.length) { const children = build(entry.children as typeof headings, true); children.hidden = entry.level !== firstLevel; item.append(children); }
+          list.append(item);
+        }
+        return list;
+      };
+      outline.replaceChildren(build(roots));
+      if (!outline.dataset.bound) { outline.dataset.bound = 'true'; outline.addEventListener('click', (event) => { const button = (event.target as Element).closest<HTMLButtonElement>('[data-outline-branch]'); if (!button) return; const expanded = button.getAttribute('aria-expanded') !== 'true'; button.setAttribute('aria-expanded', String(expanded)); const children = button.closest('li')?.querySelector<HTMLElement>(':scope > [data-outline-children]'); if (children) children.hidden = !expanded; }); }
+      document.dispatchEvent(new CustomEvent('notes:dynamic-content', { detail: { outline: true } }));
+    }
+    if (location.hash) { let id = location.hash.slice(1); try { id = decodeURIComponent(id); } catch {} requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ block: 'start' })); }
+    document.dispatchEvent(new CustomEvent('notes:dynamic-content', { detail: { noteId: note.id } }));
+  };
   document.querySelectorAll<HTMLElement>('.note-reading-layout[data-note-id]').forEach((layout) => {
-    void (async () => {
-      try {
-        const note = await getLiveNote(layout);
-        if (!note || typeof note.markdown !== 'string') return;
-        applyLiveNote(layout, note);
-        const article = layout.querySelector<HTMLElement>('.note-prose');
-        if (!article) return;
-        const normalizedMarkdown = note.markdown.replace(/(^|\n)(\s*<img\b[^>\r\n]*>)[ \t]*(?=\n|$)/gim, '$1$2\n');
-        article.innerHTML = sanitizeNoteHtml(renderNoteMarkdown(normalizedMarkdown));
-        const assets = new Map((note.assets ?? []).map((asset) => [localPath(asset.relative_path), asset.url]));
-        const resolveAsset = (source: string): string | undefined => {
-          if (/^(?:[a-z]+:|\/\/|#|data:)/i.test(source)) return undefined;
-          const normalized = localPath(source);
-          return assets.get(normalized) ?? assets.get(`media/${normalized}`) ?? assets.get(`attachments/${normalized}`) ?? assets.get(normalized.replace(/^\.\.\//, ''));
-        };
-        article.querySelectorAll<HTMLImageElement>('img[src]').forEach((image) => {
-          const url = resolveAsset(image.getAttribute('src') ?? '');
-          if (url) { image.src = url; image.loading = 'lazy'; image.decoding = 'async'; }
-        });
-        article.querySelectorAll<HTMLAnchorElement>('a[href]').forEach((link) => {
-          const url = resolveAsset(link.getAttribute('href') ?? '');
-          if (url) { link.href = url; link.dataset.attachmentOpen = ''; link.dataset.attachmentUrl = url; }
-        });
-        assignBrowserPassages(article);
-        const headingTargets = [...article.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6')].map((element) => ({ id: element.id, text: element.textContent ?? '' }));
-        article.querySelectorAll<HTMLAnchorElement>('a[href^="#"]').forEach((link) => {
-          const target = resolveHeadingFragment(link.hash, headingTargets);
-          if (target) link.href = `#${target}`;
-        });
-        const outline = document.querySelector<HTMLElement>('[data-outline-tree]');
-        if (outline) {
-          const headings = [...article.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6')].map((element) => ({ id: element.id, text: element.textContent?.trim() ?? '', level: Number(element.tagName.slice(1)), children: [] as Array<{ id: string; text: string; level: number; children: unknown[] }> }));
-          const roots: typeof headings = [];
-          const stack: typeof headings = [];
-          for (const heading of headings) {
-            while (stack.length && stack.at(-1)!.level >= heading.level) stack.pop();
-            if (stack.length) stack.at(-1)!.children.push(heading);
-            else roots.push(heading);
-            stack.push(heading);
-          }
-          const firstLevel = headings.length ? Math.min(...headings.map((heading) => heading.level)) : 1;
-          const build = (entries: typeof headings, nested = false): HTMLUListElement => {
-            const list = document.createElement('ul');
-            if (nested) list.dataset.outlineChildren = '';
-            for (const entry of entries) {
-              const item = document.createElement('li'); item.dataset.outlineItem = ''; item.dataset.level = String(entry.level); item.dataset.depth = String(entry.level - firstLevel);
-              const row = document.createElement('div'); row.className = 'outline-row'; row.style.setProperty('--outline-depth', String(entry.level - firstLevel));
-              if (entry.children.length) {
-                const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'outline-branch-toggle'; toggle.dataset.outlineBranch = '';
-                toggle.setAttribute('aria-expanded', String(entry.level === firstLevel)); toggle.setAttribute('aria-label', `${entry.level === firstLevel ? '收起' : '展开'}${entry.text}的子目录`); toggle.title = entry.level === firstLevel ? '收起子目录' : '展开子目录'; toggle.textContent = '⌄'; row.append(toggle);
-              }
-              const link = document.createElement('a'); link.href = `#${entry.id}`; link.title = entry.text; link.textContent = entry.text; row.append(link); item.append(row);
-              if (entry.children.length) { const children = build(entry.children as typeof headings, true); children.hidden = entry.level !== firstLevel; item.append(children); }
-              list.append(item);
-            }
-            return list;
-          };
-          outline.replaceChildren(build(roots));
-          outline.addEventListener('click', (event) => {
-            const button = (event.target as Element).closest<HTMLButtonElement>('[data-outline-branch]');
-            if (!button) return;
-            const expanded = button.getAttribute('aria-expanded') !== 'true';
-            button.setAttribute('aria-expanded', String(expanded));
-            const children = button.closest('li')?.querySelector<HTMLElement>(':scope > [data-outline-children]');
-            if (children) children.hidden = !expanded;
-          });
-          document.dispatchEvent(new CustomEvent('notes:dynamic-content', { detail: { outline: true } }));
-        }
-        if (location.hash) {
-          let id = location.hash.slice(1);
-          try { id = decodeURIComponent(id); } catch {}
-          requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ block: 'start' }));
-        }
-        document.dispatchEvent(new CustomEvent('notes:dynamic-content', { detail: { noteId: note.id } }));
-      } catch (error) {
-        console.error('Could not load the published note version', error);
-        if (!layout.dataset.noteId) layout.querySelector('.note-prose')!.textContent = '在线笔记暂时无法载入，请稍后刷新重试。';
-      }
-    })();
+    let activeNote: any;
+    const load = async (note: any) => { activeNote = note; applyLiveNote(layout, note); await renderLiveNote(layout, note); };
+    void (async () => { try { const note = await getLiveNote(layout); if (note && typeof note.markdown === 'string') await load(note); } catch (error) { console.error('Could not load the published note version', error); if (!layout.dataset.noteId) layout.querySelector('.note-prose')!.textContent = '在线笔记暂时无法载入，请稍后刷新重试。'; } })();
+    document.addEventListener('notes:note-saved', (event) => { const note = (event as CustomEvent).detail; if (note?.id === activeNote?.id) void load(note); });
   });
 </script>
 

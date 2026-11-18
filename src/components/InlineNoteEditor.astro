@@ -1,0 +1,297 @@
+<section class="inline-note-editor" data-inline-editor hidden aria-label="正文轻量编辑">
+  <div class="inline-editor-head">
+    <div>
+      <strong>正文轻改</strong>
+      <span data-inline-selection>先在正文中选中一段文字</span>
+    </div>
+    <button type="button" data-inline-launch>启用标注</button>
+  </div>
+  <div class="inline-editor-tools" data-inline-tools hidden>
+    <div class="inline-tool-group" aria-label="文字标注">
+      <button type="button" data-inline-format="bold" title="加粗选中文字"><b>B</b></button>
+      <button type="button" data-inline-format="italic" title="斜体选中文字"><i>I</i></button>
+      <button type="button" data-inline-format="strike" title="删除线选中文字"><s>S</s></button>
+      <button type="button" data-inline-format="mark" title="高亮选中文字">高亮</button>
+      <button type="button" data-inline-format="yellow" title="黄色底色">黄</button>
+      <button type="button" data-inline-format="green" title="绿色底色">绿</button>
+      <button type="button" data-inline-format="blue" title="蓝色底色">蓝</button>
+    </div>
+    <div class="inline-tool-group" aria-label="文字修改">
+      <button type="button" data-inline-text="replace">替换</button>
+      <button type="button" data-inline-text="before">前插</button>
+      <button type="button" data-inline-text="after">后插</button>
+      <button type="button" data-inline-text="delete">删除</button>
+    </div>
+    <div class="inline-tool-group inline-tool-group-end">
+      <button type="button" data-inline-save disabled>保存改动</button>
+      <button type="button" data-inline-cancel>取消</button>
+    </div>
+  </div>
+  <p class="inline-editor-status" data-inline-status role="status" aria-live="polite"></p>
+</section>
+
+<dialog class="inline-editor-dialog" data-inline-dialog aria-labelledby="inline-editor-dialog-title">
+  <form method="dialog" data-inline-login-form hidden>
+    <h2 id="inline-editor-dialog-title">管理员验证</h2>
+    <p>轻量编辑仍会写入在线笔记，请输入管理员密码。</p>
+    <label>管理员密码<input type="password" data-inline-password autocomplete="current-password" required minlength="1" /></label>
+    <div class="inline-dialog-actions"><button value="cancel">取消</button><button value="login">验证并继续</button></div>
+  </form>
+  <form method="dialog" data-inline-text-form hidden>
+    <h2 data-inline-text-title>修改选中文字</h2>
+    <p data-inline-text-hint></p>
+    <label>文字内容<textarea data-inline-text-value rows="5" maxlength="4000"></textarea></label>
+    <div class="inline-dialog-actions"><button value="cancel">取消</button><button value="apply">应用</button></div>
+  </form>
+</dialog>
+
+<script>
+  import { liveApiHeaders, liveApiUrl } from '../lib/live-backend';
+
+  type LiveNote = { id: string; path: string; type: string; title: string; version: number; markdown?: string; assets?: Array<{ relative_path: string; url: string }> };
+  type SelectionInfo = { block: HTMLElement; start: number; end: number; text: string };
+  type SourceCandidate = { raw: string; start: number; plain: string; map: number[]; normalized: string; normalizedMap: number[] };
+
+  const root = document.querySelector<HTMLElement>('[data-inline-editor]');
+  const layout = document.querySelector<HTMLElement>('.note-reading-layout[data-note-id]');
+  const article = layout?.querySelector<HTMLElement>('.note-prose');
+  const dialog = root?.parentElement?.querySelector<HTMLDialogElement>('[data-inline-dialog]') ?? document.querySelector<HTMLDialogElement>('[data-inline-dialog]');
+  if (root && layout && article && dialog) {
+    const tools = root.querySelector<HTMLElement>('[data-inline-tools]')!;
+    const selectionLabel = root.querySelector<HTMLElement>('[data-inline-selection]')!;
+    const status = root.querySelector<HTMLElement>('[data-inline-status]')!;
+    const save = root.querySelector<HTMLButtonElement>('[data-inline-save]')!;
+    const loginForm = dialog.querySelector<HTMLFormElement>('[data-inline-login-form]')!;
+    const textForm = dialog.querySelector<HTMLFormElement>('[data-inline-text-form]')!;
+    const password = dialog.querySelector<HTMLInputElement>('[data-inline-password]')!;
+    const textValue = dialog.querySelector<HTMLTextAreaElement>('[data-inline-text-value]')!;
+    const textTitle = dialog.querySelector<HTMLElement>('[data-inline-text-title]')!;
+    const textHint = dialog.querySelector<HTMLElement>('[data-inline-text-hint]')!;
+    const launch = root.querySelector<HTMLButtonElement>('[data-inline-launch]')!;
+    let note: LiveNote | null = null;
+    let source = '';
+    let pending = '';
+    let selection: SelectionInfo | null = null;
+    let actionAfterLogin: (() => void) | null = null;
+    let csrf = '';
+    let dialogMode: 'login' | 'text' = 'login';
+
+    const say = (message: string) => { status.textContent = message; };
+    const normalize = (value: string) => value.replace(/\s+/g, ' ').trim();
+    const protectedSelector = 'a,code,pre,table,img,video,svg,.katex,.hljs,.note-code-block';
+    const closestBlock = (node: Node): HTMLElement | null => {
+      const element = node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement;
+      return element?.closest<HTMLElement>('[data-search-passage],h1,h2,h3,h4,h5,h6,p,li,td,th') ?? null;
+    };
+    const hasProtectedContent = (range: Range, block: HTMLElement) => {
+      const startElement = range.startContainer.nodeType === Node.ELEMENT_NODE ? range.startContainer as Element : range.startContainer.parentElement;
+      const endElement = range.endContainer.nodeType === Node.ELEMENT_NODE ? range.endContainer as Element : range.endContainer.parentElement;
+      if (startElement?.closest(protectedSelector) || endElement?.closest(protectedSelector)) return true;
+      const fragment = range.cloneContents();
+      return Boolean(fragment.querySelector(protectedSelector)) || Boolean(block.closest(protectedSelector));
+    };
+    const textOffset = (block: HTMLElement, container: Node, offset: number) => {
+      const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+      let total = 0;
+      let current: Node | null;
+      while ((current = walker.nextNode())) {
+        if (current === container) return total + offset;
+        total += current.textContent?.length ?? 0;
+      }
+      return total;
+    };
+    const sourceMap = (raw: string): SourceCandidate => {
+      const chars: string[] = [];
+      const map: number[] = [];
+      let lineStart = true;
+      for (let index = 0; index < raw.length; index += 1) {
+        const char = raw[index];
+        if (char === '<') {
+          const end = raw.indexOf('>', index + 1);
+          if (end >= 0) { index = end; continue; }
+        }
+        if (char === '!' && raw[index + 1] === '[') {
+          const end = raw.indexOf(')', index + 2);
+          if (end >= 0) { index = end; continue; }
+        }
+        if (char === '[' && raw.indexOf('](', index + 1) >= 0) continue;
+        if (char === ']' && raw[index + 1] === '(') {
+          const end = raw.indexOf(')', index + 2);
+          if (end >= 0) { index = end; continue; }
+        }
+        if (char === '\\' && index + 1 < raw.length) { chars.push(raw[index + 1]); map.push(index + 1); index += 1; lineStart = false; continue; }
+        if (lineStart && (char === '#' || char === '>' || char === '-' || char === '*' || char === '+' || /\d/.test(char))) {
+          let cursor = index;
+          while (cursor < raw.length && /[#>\-*+\d.)、\s]/.test(raw[cursor])) cursor += 1;
+          index = cursor - 1; lineStart = false; continue;
+        }
+        if (char === '*' || char === '_' || char === '~' || char === '`') continue;
+        chars.push(char); map.push(index); lineStart = char === '\n' || char === '\r';
+      }
+      const plain = chars.join('');
+      const normalizedMap: number[] = [];
+      let normalized = '';
+      let whitespace = false;
+      for (let index = 0; index < plain.length; index += 1) {
+        if (/\s/.test(plain[index])) { whitespace = true; continue; }
+        if (whitespace && normalized) { normalized += ' '; normalizedMap.push(map[index - 1] ?? map[index]); }
+        whitespace = false; normalized += plain[index]; normalizedMap.push(map[index]);
+      }
+      return { raw, start: 0, plain, map, normalized: normalized.trim(), normalizedMap };
+    };
+    const candidates = (markdown: string) => {
+      const result: SourceCandidate[] = []; let cursor = 0;
+      for (const raw of markdown.split(/\n{2,}/)) {
+        const start = markdown.indexOf(raw, cursor); if (start < 0) continue;
+        const candidate = sourceMap(raw); result.push({ ...candidate, start }); cursor = start + raw.length;
+      }
+      return result.filter((candidate) => candidate.normalized);
+    };
+    const mapSelection = (range: Range): SelectionInfo | null => {
+      const startBlock = closestBlock(range.startContainer); const endBlock = closestBlock(range.endContainer);
+      if (!startBlock || startBlock !== endBlock || hasProtectedContent(range, startBlock)) return null;
+      const start = textOffset(startBlock, range.startContainer, range.startOffset);
+      const end = textOffset(startBlock, range.endContainer, range.endOffset);
+      const text = range.toString();
+      if (!text.trim() || end <= start) return null;
+      return { block: startBlock, start, end, text };
+    };
+    const patchSource = (info: SelectionInfo, operation: string, value = '', wrapper?: { before: string; after: string }): string | null => {
+      const blocks = candidates(source);
+      const blockText = normalize(info.block.textContent ?? '');
+      const selected = normalize(info.text);
+      const blockIndex = [...article.querySelectorAll<HTMLElement>('[data-search-passage]')].indexOf(info.block);
+      let best: SourceCandidate | undefined; let bestScore = Infinity;
+      blocks.forEach((candidate, index) => {
+        if (!candidate.normalized.includes(selected) || (!candidate.normalized.includes(blockText) && !blockText.includes(candidate.normalized))) return;
+        const score = Math.abs(index - Math.max(0, blockIndex));
+        if (score < bestScore) { best = candidate; bestScore = score; }
+      });
+      if (!best) return null;
+      const prefix = normalize((info.block.textContent ?? '').slice(0, info.start));
+      const startHint = Math.max(0, best.normalized.indexOf(prefix));
+      let match = best.normalized.indexOf(selected, startHint);
+      if (match < 0) match = best.normalized.indexOf(selected);
+      if (match < 0) return null;
+      const rawStart = best.normalizedMap[match];
+      const rawEndIndex = best.normalizedMap[match + selected.length - 1];
+      if (rawStart === undefined || rawEndIndex === undefined) return null;
+      const rawEnd = rawEndIndex + 1;
+      const before = source.slice(0, best.start);
+      const blockStart = best.start;
+      const selectedRaw = best.raw.slice(rawStart, rawEnd);
+      const replacement = wrapper ? `${wrapper.before}${selectedRaw}${wrapper.after}` : operation === 'delete' ? '' : operation === 'before' ? `${value}${selectedRaw}` : operation === 'after' ? `${selectedRaw}${value}` : operation === 'replace' ? value : selectedRaw;
+      if (operation === 'delete' || operation === 'before' || operation === 'after' || operation === 'replace') return `${before}${best.raw.slice(0, rawStart)}${replacement}${best.raw.slice(rawEnd)}${source.slice(blockStart + best.raw.length)}`;
+      return `${before}${best.raw.slice(0, rawStart)}${replacement}${best.raw.slice(rawEnd)}${source.slice(blockStart + best.raw.length)}`;
+    };
+    const setToolbar = (enabled: boolean) => { tools.hidden = !enabled; selectionLabel.textContent = enabled && selection ? `已选 ${normalize(selection.text).slice(0, 80)}` : '先在正文中选中一段文字'; };
+    const rememberSelection = () => {
+      const current = window.getSelection();
+      if (!current || current.rangeCount === 0 || current.isCollapsed || !article.contains(current.anchorNode) || !article.contains(current.focusNode)) return;
+      const mapped = mapSelection(current.getRangeAt(0));
+      selection = mapped;
+      setToolbar(Boolean(mapped));
+      if (!mapped) say('只能编辑同一段纯文本；公式、链接、代码、图片和表格请到管理页修改。');
+    };
+    const openDialog = (mode: 'login' | 'text') => { dialogMode = mode; loginForm.hidden = mode !== 'login'; textForm.hidden = mode !== 'text'; if (!dialog.open) dialog.showModal(); if (mode === 'login') password.focus(); else textValue.focus(); };
+    const ensureAdmin = async (next: () => void) => {
+      const response = await fetch(liveApiUrl('/api/admin/session'), { cache: 'no-store', headers: liveApiHeaders() });
+      const data = await response.json().catch(() => ({}));
+      if (data.authenticated) { csrf = data.csrfToken || csrf; next(); return; }
+      actionAfterLogin = next; openDialog('login');
+    };
+    const applyPatch = (operation: string, value = '', wrapper?: { before: string; after: string }) => {
+      if (!selection) return say('请先选中正文中的一段文字。');
+      const patched = patchSource(selection, operation, value, wrapper);
+      if (patched === null) return say('没有在原 Markdown 中找到这段文字，请改用管理页源码编辑。');
+      pending = patched; save.disabled = false; say('改动已暂存，确认内容后点击“保存改动”。'); selection = null; setToolbar(false); window.getSelection()?.removeAllRanges();
+    };
+    const openTextAction = (action: string) => {
+      if (!selection) return say('请先选中正文中的一段文字。');
+      textTitle.textContent = action === 'delete' ? '删除选中文字' : action === 'replace' ? '替换选中文字' : action === 'before' ? '在选中文字前插入' : '在选中文字后插入';
+      textHint.textContent = action === 'delete' ? '删除后可在保存前取消本次改动。' : '只会影响当前选中的纯文本位置。';
+      textValue.value = ''; textValue.required = action !== 'delete'; textValue.disabled = action === 'delete'; textValue.placeholder = action === 'delete' ? '无需填写' : '输入文字';
+      textForm.dataset.action = action; openDialog('text');
+    };
+    root.querySelectorAll<HTMLButtonElement>('[data-inline-format]').forEach((button) => button.addEventListener('pointerdown', (event) => event.preventDefault()));
+    root.querySelectorAll<HTMLButtonElement>('[data-inline-text]').forEach((button) => button.addEventListener('pointerdown', (event) => event.preventDefault()));
+    root.querySelectorAll<HTMLButtonElement>('[data-inline-format]').forEach((button) => button.addEventListener('click', () => {
+      const kind = button.dataset.inlineFormat!;
+      const formats: Record<string, { before: string; after: string }> = {
+        bold: { before: '**', after: '**' }, italic: { before: '*', after: '*' }, strike: { before: '~~', after: '~~' },
+        mark: { before: '<mark>', after: '</mark>' }, yellow: { before: '<span style="background-color: #fff2a8">', after: '</span>' },
+        green: { before: '<span style="background-color: #d7f5dd">', after: '</span>' }, blue: { before: '<span style="background-color: #d9ecff">', after: '</span>' },
+      };
+      const wrapper = formats[kind];
+      if (!wrapper) return;
+      ensureAdmin(() => applyPatch('wrap', '', wrapper));
+    }));
+    root.querySelectorAll<HTMLButtonElement>('[data-inline-text]').forEach((button) => button.addEventListener('click', () => openTextAction(button.dataset.inlineText!)));
+    launch.addEventListener('click', () => { tools.hidden = false; say('在正文中拖选一段纯文本，然后选择标注或文字修改。'); });
+    save.addEventListener('click', () => void ensureAdmin(async () => {
+      if (!note || !pending) return;
+      save.disabled = true;
+      try {
+        const response = await fetch(liveApiUrl(`/api/admin/notes/${encodeURIComponent(note.id)}/markdown`), { method: 'PUT', cache: 'no-store', headers: liveApiHeaders({ 'content-type': 'application/json', 'x-csrf-token': csrf }), body: JSON.stringify({ expectedVersion: note.version, content: pending }) });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || (response.status === 409 ? '笔记已被其他窗口修改，请刷新后重试。' : '保存失败，请稍后重试。'));
+        note = { ...note, version: data.version, markdown: pending }; source = pending; pending = '';
+        say(`已发布版本 ${data.version}，正文和目录已更新。`);
+        document.dispatchEvent(new CustomEvent('notes:note-saved', { detail: note }));
+      } catch (error) { save.disabled = false; say(error instanceof Error ? error.message : '保存失败，请稍后重试。'); }
+    }));
+    root.querySelector<HTMLButtonElement>('[data-inline-cancel]')!.addEventListener('click', () => { pending = ''; save.disabled = true; selection = null; setToolbar(false); say('已取消本次轻量改动。'); });
+    loginForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (dialogMode !== 'login') return;
+      try {
+        const response = await fetch(liveApiUrl('/api/auth/login'), { method: 'POST', headers: liveApiHeaders({ 'content-type': 'application/json' }), body: JSON.stringify({ password: password.value }) });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || '管理员验证失败');
+        sessionStorage.setItem('notes-admin-session', data.accessToken); csrf = data.csrfToken || '';
+        password.value = ''; dialog.close(); const action = actionAfterLogin; actionAfterLogin = null; action?.();
+      } catch (error) { say(error instanceof Error ? error.message : '管理员验证失败'); }
+    });
+    textForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (dialogMode !== 'text') return;
+      const action = textForm.dataset.action || 'replace'; const value = textValue.value;
+      if (action !== 'delete' && !value) return say('请输入要插入或替换的文字。');
+      dialog.close(); ensureAdmin(() => applyPatch(action, value));
+    });
+    dialog.addEventListener('close', () => { loginForm.hidden = true; textForm.hidden = true; });
+    article.addEventListener('mouseup', rememberSelection); article.addEventListener('keyup', rememberSelection);
+    document.addEventListener('notes:live-note', (event) => {
+      const incoming = (event as CustomEvent<LiveNote>).detail;
+      if (!incoming || incoming.type !== 'markdown' || typeof incoming.markdown !== 'string') return;
+      note = incoming; source = incoming.markdown; pending = ''; root.hidden = false; setToolbar(false); say('正文支持选区标注；复杂内容请到管理页修改。');
+    });
+  }
+</script>
+
+<style>
+  .inline-note-editor { display: grid; grid-column: 1 / -1; gap: .55rem; margin: 0 auto 1.25rem; max-width: 78rem; padding: .7rem .85rem; border: 1px solid var(--sl-color-gray-5); border-radius: 8px; background: var(--sl-color-bg-nav); box-shadow: 0 3px 14px #0000000a; }
+  .inline-note-editor[hidden], .inline-editor-tools[hidden], .inline-editor-dialog [hidden] { display: none !important; }
+  .inline-editor-head { display: flex; align-items: center; justify-content: space-between; gap: .8rem; }
+  .inline-editor-head > div { display: flex; min-width: 0; align-items: baseline; gap: .65rem; }
+  .inline-editor-head strong { color: var(--sl-color-accent-high); font-size: .8rem; white-space: nowrap; }
+  .inline-editor-head span { min-width: 0; overflow: hidden; color: var(--sl-color-gray-3); font-size: .74rem; text-overflow: ellipsis; white-space: nowrap; }
+  .inline-editor-head button, .inline-editor-tools button { min-height: 1.9rem; padding: .25rem .55rem; border: 1px solid var(--sl-color-gray-5); border-radius: 5px; background: var(--sl-color-bg); color: var(--sl-color-gray-2); font: .74rem/1.3 var(--sl-font); cursor: pointer; }
+  .inline-editor-head button:hover, .inline-editor-tools button:hover { border-color: var(--sl-color-accent); background: var(--sl-color-accent-low); color: var(--sl-color-accent-high); }
+  .inline-editor-tools { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+  .inline-tool-group { display: flex; gap: .25rem; padding-right: .5rem; border-right: 1px solid var(--sl-color-gray-5); }
+  .inline-tool-group-end { margin-left: auto; padding: 0; border: 0; }
+  .inline-tool-group-end [data-inline-save] { border-color: var(--sl-color-accent); background: var(--sl-color-accent); color: white; }
+  .inline-tool-group-end [data-inline-save]:disabled { opacity: .45; cursor: not-allowed; }
+  .inline-editor-status { min-height: 1.1rem; margin: 0; color: var(--sl-color-gray-3); font-size: .72rem; }
+  .inline-editor-dialog { width: min(28rem, calc(100vw - 2rem)); padding: 1.2rem; border: 1px solid var(--sl-color-gray-5); border-radius: 9px; background: var(--sl-color-bg); color: var(--sl-color-text); box-shadow: 0 18px 60px #0004; }
+  .inline-editor-dialog::backdrop { background: #07150e88; backdrop-filter: blur(2px); }
+  .inline-editor-dialog h2 { margin: 0 0 .55rem; font-size: 1rem; }
+  .inline-editor-dialog p { margin: .4rem 0 .8rem; color: var(--sl-color-gray-3); font-size: .8rem; line-height: 1.6; }
+  .inline-editor-dialog label { display: grid; gap: .35rem; color: var(--sl-color-gray-2); font-size: .78rem; }
+  .inline-editor-dialog input, .inline-editor-dialog textarea { width: 100%; box-sizing: border-box; padding: .55rem .65rem; border: 1px solid var(--sl-color-gray-5); border-radius: 5px; background: var(--sl-color-bg-nav); color: var(--sl-color-text); font: inherit; }
+  .inline-dialog-actions { display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1rem; }
+  .inline-dialog-actions button { padding: .45rem .75rem; border: 1px solid var(--sl-color-gray-5); border-radius: 5px; background: var(--sl-color-bg-nav); color: var(--sl-color-gray-2); cursor: pointer; }
+  .inline-dialog-actions button[value='login'], .inline-dialog-actions button[value='apply'] { border-color: var(--sl-color-accent); background: var(--sl-color-accent); color: white; }
+  @media (max-width: 49.99rem) { .inline-editor-head > div { display: grid; gap: .15rem; } .inline-tool-group-end { margin-left: 0; } .inline-editor-tools { align-items: stretch; } }
+</style>

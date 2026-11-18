@@ -184,7 +184,7 @@
       if (operation === 'delete' || operation === 'before' || operation === 'after' || operation === 'replace') return `${before}${best.raw.slice(0, rawStart)}${replacement}${best.raw.slice(rawEnd)}${source.slice(blockStart + best.raw.length)}`;
       return `${before}${best.raw.slice(0, rawStart)}${replacement}${best.raw.slice(rawEnd)}${source.slice(blockStart + best.raw.length)}`;
     };
-    const setToolbar = (enabled: boolean) => { tools.hidden = !enabled; selectionLabel.textContent = enabled && selection ? `已选 ${normalize(selection.text).slice(0, 80)}` : '先在正文中选中一段文字'; };
+    const setToolbar = (enabled: boolean) => { selectionLabel.textContent = enabled && selection ? `已选 ${normalize(selection.text).slice(0, 80)}` : '先在正文中选中一段文字'; };
     const rememberSelection = () => {
       const current = window.getSelection();
       if (!current || current.rangeCount === 0 || current.isCollapsed || !article.contains(current.anchorNode) || !article.contains(current.focusNode)) return;
@@ -227,7 +227,11 @@
       ensureAdmin(() => applyPatch('wrap', '', wrapper));
     }));
     root.querySelectorAll<HTMLButtonElement>('[data-inline-text]').forEach((button) => button.addEventListener('click', () => openTextAction(button.dataset.inlineText!)));
-    launch.addEventListener('click', () => { tools.hidden = false; say('在正文中拖选一段纯文本，然后选择标注或文字修改。'); });
+    launch.addEventListener('click', () => {
+      tools.hidden = !tools.hidden;
+      launch.textContent = tools.hidden ? '启用标注' : '收起工具';
+      if (!tools.hidden) say('在正文中拖选一段纯文本，然后选择标注或文字修改。');
+    });
     save.addEventListener('click', () => void ensureAdmin(async () => {
       if (!note || !pending) return;
       save.disabled = true;
@@ -264,13 +268,13 @@
     document.addEventListener('notes:live-note', (event) => {
       const incoming = (event as CustomEvent<LiveNote>).detail;
       if (!incoming || incoming.type !== 'markdown' || typeof incoming.markdown !== 'string') return;
-      note = incoming; source = incoming.markdown; pending = ''; root.hidden = false; setToolbar(false); say('正文支持选区标注；复杂内容请到管理页修改。');
+      note = incoming; source = incoming.markdown; pending = ''; root.hidden = false; tools.hidden = false; launch.textContent = '收起工具'; setToolbar(false); say('正文支持选区标注；复杂内容请到管理页修改。');
     });
   }
 </script>
 
 <style>
-  .inline-note-editor { display: grid; grid-column: 1 / -1; gap: .55rem; margin: 0 auto 1.25rem; max-width: 78rem; padding: .7rem .85rem; border: 1px solid var(--sl-color-gray-5); border-radius: 8px; background: var(--sl-color-bg-nav); box-shadow: 0 3px 14px #0000000a; }
+  .inline-note-editor { position: sticky; top: calc(var(--sl-nav-height) + .5rem); z-index: 30; display: grid; grid-column: 1 / -1; gap: .55rem; margin: 0 auto 1.25rem; max-width: 78rem; padding: .7rem .85rem; border: 1px solid var(--sl-color-gray-5); border-radius: 8px; background: color-mix(in srgb, var(--sl-color-bg-nav) 94%, transparent); box-shadow: 0 3px 14px #00000018; backdrop-filter: blur(8px); }
   .inline-note-editor[hidden], .inline-editor-tools[hidden], .inline-editor-dialog [hidden] { display: none !important; }
   .inline-editor-head { display: flex; align-items: center; justify-content: space-between; gap: .8rem; }
   .inline-editor-head > div { display: flex; min-width: 0; align-items: baseline; gap: .65rem; }

@@ -1,10 +1,10 @@
-<section class="inline-note-editor" data-inline-editor hidden aria-label="正文轻量编辑">
+<section class="inline-note-editor" data-inline-editor hidden aria-label="正文轻量编辑" role="toolbar">
   <div class="inline-editor-head">
     <div>
-      <strong>正文轻改</strong>
+      <strong aria-hidden="true">标注</strong>
       <span data-inline-selection>先在正文中选中一段文字</span>
     </div>
-    <button type="button" data-inline-launch>启用标注</button>
+    <button type="button" data-inline-launch aria-label="关闭标注工具" title="关闭标注工具">×</button>
   </div>
   <div class="inline-editor-tools" data-inline-tools hidden>
     <div class="inline-tool-group" aria-label="文字标注">
@@ -31,17 +31,18 @@
 </section>
 
 <dialog class="inline-editor-dialog" data-inline-dialog aria-labelledby="inline-editor-dialog-title">
-  <form method="dialog" data-inline-login-form hidden>
+  <form data-inline-login-form hidden>
     <h2 id="inline-editor-dialog-title">管理员验证</h2>
     <p>轻量编辑仍会写入在线笔记，请输入管理员密码。</p>
     <label>管理员密码<input type="password" data-inline-password autocomplete="current-password" required minlength="1" /></label>
-    <div class="inline-dialog-actions"><button value="cancel">取消</button><button value="login">验证并继续</button></div>
+    <p class="inline-dialog-error" data-inline-login-error role="alert" hidden></p>
+    <div class="inline-dialog-actions"><button type="button" data-inline-dialog-cancel>取消</button><button type="submit" value="login">验证并继续</button></div>
   </form>
-  <form method="dialog" data-inline-text-form hidden>
+  <form data-inline-text-form hidden>
     <h2 data-inline-text-title>修改选中文字</h2>
     <p data-inline-text-hint></p>
     <label>文字内容<textarea data-inline-text-value rows="5" maxlength="4000"></textarea></label>
-    <div class="inline-dialog-actions"><button value="cancel">取消</button><button value="apply">应用</button></div>
+    <div class="inline-dialog-actions"><button type="button" data-inline-dialog-cancel>取消</button><button type="submit" value="apply">应用</button></div>
   </form>
 </dialog>
 
@@ -67,6 +68,8 @@
     const textValue = dialog.querySelector<HTMLTextAreaElement>('[data-inline-text-value]')!;
     const textTitle = dialog.querySelector<HTMLElement>('[data-inline-text-title]')!;
     const textHint = dialog.querySelector<HTMLElement>('[data-inline-text-hint]')!;
+    const loginError = dialog.querySelector<HTMLElement>('[data-inline-login-error]')!;
+    const loginSubmit = loginForm.querySelector<HTMLButtonElement>('button[type="submit"]')!;
     const launch = root.querySelector<HTMLButtonElement>('[data-inline-launch]')!;
     let note: LiveNote | null = null;
     let source = '';
@@ -75,6 +78,8 @@
     let actionAfterLogin: (() => void) | null = null;
     let csrf = '';
     let dialogMode: 'login' | 'text' = 'login';
+    let toolbarRect: DOMRect | null = null;
+    let toolbarClosed = false;
 
     const say = (message: string) => { status.textContent = message; };
     const normalize = (value: string) => value.replace(/\s+/g, ' ').trim();
@@ -184,21 +189,68 @@
       if (operation === 'delete' || operation === 'before' || operation === 'after' || operation === 'replace') return `${before}${best.raw.slice(0, rawStart)}${replacement}${best.raw.slice(rawEnd)}${source.slice(blockStart + best.raw.length)}`;
       return `${before}${best.raw.slice(0, rawStart)}${replacement}${best.raw.slice(rawEnd)}${source.slice(blockStart + best.raw.length)}`;
     };
-    const setToolbar = (enabled: boolean) => { selectionLabel.textContent = enabled && selection ? `已选 ${normalize(selection.text).slice(0, 80)}` : '先在正文中选中一段文字'; };
+    const positionToolbar = () => {
+      if (root.hidden || !toolbarRect) return;
+      const margin = 8;
+      const gap = 10;
+      const width = root.offsetWidth;
+      const height = root.offsetHeight;
+      const left = Math.max(margin, Math.min(window.innerWidth - width - margin, toolbarRect.left + (toolbarRect.width - width) / 2));
+      const above = toolbarRect.top - height - gap;
+      const below = toolbarRect.bottom + gap;
+      const aboveSpace = toolbarRect.top - gap - margin;
+      const belowSpace = window.innerHeight - toolbarRect.bottom - gap - margin;
+      const top = height <= aboveSpace ? above : height <= belowSpace ? below : aboveSpace >= belowSpace ? Math.max(margin, above) : Math.min(window.innerHeight - height - margin, below);
+      root.style.left = `${Math.round(left)}px`;
+      root.style.top = `${Math.round(top)}px`;
+    };
+    const showToolbar = (rect: DOMRect) => {
+      toolbarRect = rect;
+      toolbarClosed = false;
+      root.hidden = false;
+      tools.hidden = false;
+      requestAnimationFrame(positionToolbar);
+    };
+    const hideToolbar = () => {
+      root.hidden = true;
+      toolbarRect = null;
+    };
+    const setToolbar = (enabled: boolean, rect?: DOMRect) => {
+      selectionLabel.textContent = enabled && selection ? normalize(selection.text).slice(0, 80) : '';
+      if (enabled && rect && !toolbarClosed) showToolbar(rect);
+      else if (!pending) hideToolbar();
+      else requestAnimationFrame(positionToolbar);
+    };
     const rememberSelection = () => {
       const current = window.getSelection();
-      if (!current || current.rangeCount === 0 || current.isCollapsed || !article.contains(current.anchorNode) || !article.contains(current.focusNode)) return;
+      if (!current || current.rangeCount === 0 || current.isCollapsed || !article.contains(current.anchorNode) || !article.contains(current.focusNode)) {
+        selection = null;
+        if (!pending) hideToolbar();
+        return;
+      }
       const mapped = mapSelection(current.getRangeAt(0));
       selection = mapped;
-      setToolbar(Boolean(mapped));
+      setToolbar(Boolean(mapped), mapped ? current.getRangeAt(0).getBoundingClientRect() : undefined);
       if (!mapped) say('只能编辑同一段纯文本；公式、链接、代码、图片和表格请到管理页修改。');
     };
-    const openDialog = (mode: 'login' | 'text') => { dialogMode = mode; loginForm.hidden = mode !== 'login'; textForm.hidden = mode !== 'text'; if (!dialog.open) dialog.showModal(); if (mode === 'login') password.focus(); else textValue.focus(); };
+    const openDialog = (mode: 'login' | 'text') => {
+      dialogMode = mode;
+      loginForm.hidden = mode !== 'login';
+      textForm.hidden = mode !== 'text';
+      loginError.hidden = true;
+      loginError.textContent = '';
+      if (!dialog.open) dialog.showModal();
+      requestAnimationFrame(() => (mode === 'login' ? password : textValue).focus());
+    };
     const ensureAdmin = async (next: () => void) => {
-      const response = await fetch(liveApiUrl('/api/admin/session'), { cache: 'no-store', headers: liveApiHeaders() });
-      const data = await response.json().catch(() => ({}));
-      if (data.authenticated) { csrf = data.csrfToken || csrf; next(); return; }
-      actionAfterLogin = next; openDialog('login');
+      try {
+        const response = await fetch(liveApiUrl('/api/admin/session'), { cache: 'no-store', headers: liveApiHeaders() });
+        const data = await response.json().catch(() => ({}));
+        if (data.authenticated) { csrf = data.csrfToken || csrf; next(); return; }
+        actionAfterLogin = next; openDialog('login');
+      } catch (error) {
+        say(error instanceof Error ? `无法连接在线笔记服务：${error.message}` : '无法连接在线笔记服务。');
+      }
     };
     const applyPatch = (operation: string, value = '', wrapper?: { before: string; after: string }) => {
       if (!selection) return say('请先选中正文中的一段文字。');
@@ -228,9 +280,11 @@
     }));
     root.querySelectorAll<HTMLButtonElement>('[data-inline-text]').forEach((button) => button.addEventListener('click', () => openTextAction(button.dataset.inlineText!)));
     launch.addEventListener('click', () => {
-      tools.hidden = !tools.hidden;
-      launch.textContent = tools.hidden ? '启用标注' : '收起工具';
-      if (!tools.hidden) say('在正文中拖选一段纯文本，然后选择标注或文字修改。');
+      if (pending) { say('请先保存或取消当前改动。'); return; }
+      toolbarClosed = true;
+      selection = null;
+      window.getSelection()?.removeAllRanges();
+      hideToolbar();
     });
     save.addEventListener('click', () => void ensureAdmin(async () => {
       if (!note || !pending) return;
@@ -242,19 +296,26 @@
         note = { ...note, version: data.version, markdown: pending }; source = pending; pending = '';
         say(`已发布版本 ${data.version}，正文和目录已更新。`);
         document.dispatchEvent(new CustomEvent('notes:note-saved', { detail: note }));
+        hideToolbar();
       } catch (error) { save.disabled = false; say(error instanceof Error ? error.message : '保存失败，请稍后重试。'); }
     }));
     root.querySelector<HTMLButtonElement>('[data-inline-cancel]')!.addEventListener('click', () => { pending = ''; save.disabled = true; selection = null; setToolbar(false); say('已取消本次轻量改动。'); });
     loginForm.addEventListener('submit', async (event) => {
       event.preventDefault();
       if (dialogMode !== 'login') return;
+      loginSubmit.disabled = true;
+      loginError.hidden = true;
       try {
         const response = await fetch(liveApiUrl('/api/auth/login'), { method: 'POST', headers: liveApiHeaders({ 'content-type': 'application/json' }), body: JSON.stringify({ password: password.value }) });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || '管理员验证失败');
         sessionStorage.setItem('notes-admin-session', data.accessToken); csrf = data.csrfToken || '';
         password.value = ''; dialog.close(); const action = actionAfterLogin; actionAfterLogin = null; action?.();
-      } catch (error) { say(error instanceof Error ? error.message : '管理员验证失败'); }
+      } catch (error) {
+        loginError.textContent = error instanceof Error ? error.message : '管理员验证失败';
+        loginError.hidden = false;
+        password.select();
+      } finally { loginSubmit.disabled = false; }
     });
     textForm.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -263,31 +324,41 @@
       if (action !== 'delete' && !value) return say('请输入要插入或替换的文字。');
       dialog.close(); ensureAdmin(() => applyPatch(action, value));
     });
-    dialog.addEventListener('close', () => { loginForm.hidden = true; textForm.hidden = true; });
+    dialog.querySelectorAll<HTMLButtonElement>('[data-inline-dialog-cancel]').forEach((button) => button.addEventListener('click', () => { actionAfterLogin = null; dialog.close(); }));
+    dialog.addEventListener('close', () => { loginForm.hidden = true; textForm.hidden = true; loginSubmit.disabled = false; });
     article.addEventListener('mouseup', rememberSelection); article.addEventListener('keyup', rememberSelection);
+    window.addEventListener('scroll', positionToolbar, { passive: true });
+    window.addEventListener('resize', positionToolbar);
+    document.addEventListener('mousedown', (event) => {
+      const target = event.target as Node | null;
+      if (!target || root.contains(target) || article.contains(target) || dialog.contains(target)) return;
+      selection = null;
+      if (!pending) hideToolbar();
+    });
     document.addEventListener('notes:live-note', (event) => {
       const incoming = (event as CustomEvent<LiveNote>).detail;
       if (!incoming || incoming.type !== 'markdown' || typeof incoming.markdown !== 'string') return;
-      note = incoming; source = incoming.markdown; pending = ''; root.hidden = false; tools.hidden = false; launch.textContent = '收起工具'; setToolbar(false); say('正文支持选区标注；复杂内容请到管理页修改。');
+      note = incoming; source = incoming.markdown; pending = ''; selection = null; toolbarClosed = false; hideToolbar(); save.disabled = true; say('');
     });
   }
 </script>
 
 <style>
-  .inline-note-editor { position: sticky; top: calc(var(--sl-nav-height) + .5rem); z-index: 30; display: grid; grid-column: 1 / -1; gap: .55rem; margin: 0 auto 1.25rem; max-width: 78rem; padding: .7rem .85rem; border: 1px solid var(--sl-color-gray-5); border-radius: 8px; background: color-mix(in srgb, var(--sl-color-bg-nav) 94%, transparent); box-shadow: 0 3px 14px #00000018; backdrop-filter: blur(8px); }
+  .inline-note-editor { position: fixed; z-index: 90; display: grid; width: max-content; max-width: min(44rem, calc(100vw - 1rem)); gap: .35rem; margin: 0; padding: .42rem .5rem; border: 1px solid color-mix(in srgb, var(--sl-color-accent) 28%, var(--sl-color-gray-5)); border-radius: 9px; background: color-mix(in srgb, var(--sl-color-bg) 96%, transparent); box-shadow: 0 8px 26px #07150e26, 0 1px 4px #07150e18; backdrop-filter: blur(12px); }
   .inline-note-editor[hidden], .inline-editor-tools[hidden], .inline-editor-dialog [hidden] { display: none !important; }
-  .inline-editor-head { display: flex; align-items: center; justify-content: space-between; gap: .8rem; }
-  .inline-editor-head > div { display: flex; min-width: 0; align-items: baseline; gap: .65rem; }
-  .inline-editor-head strong { color: var(--sl-color-accent-high); font-size: .8rem; white-space: nowrap; }
-  .inline-editor-head span { min-width: 0; overflow: hidden; color: var(--sl-color-gray-3); font-size: .74rem; text-overflow: ellipsis; white-space: nowrap; }
-  .inline-editor-head button, .inline-editor-tools button { min-height: 1.9rem; padding: .25rem .55rem; border: 1px solid var(--sl-color-gray-5); border-radius: 5px; background: var(--sl-color-bg); color: var(--sl-color-gray-2); font: .74rem/1.3 var(--sl-font); cursor: pointer; }
+  .inline-editor-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+  .inline-editor-head > div { display: flex; min-width: 0; align-items: center; gap: .45rem; }
+  .inline-editor-head strong { color: var(--sl-color-accent-high); font-size: .7rem; font-weight: 750; letter-spacing: .02em; white-space: nowrap; }
+  .inline-editor-head span { display: block; max-width: 16rem; overflow: hidden; color: var(--sl-color-gray-3); font-size: .68rem; text-overflow: ellipsis; white-space: nowrap; }
+  .inline-editor-head button, .inline-editor-tools button { min-height: 1.8rem; padding: .2rem .48rem; border: 1px solid var(--sl-color-gray-5); border-radius: 5px; background: var(--sl-color-bg); color: var(--sl-color-gray-2); font: .72rem/1.25 var(--sl-font); cursor: pointer; }
+  .inline-editor-head button { width: 1.8rem; padding: 0; color: var(--sl-color-gray-3); font-size: 1rem; line-height: 1; }
   .inline-editor-head button:hover, .inline-editor-tools button:hover { border-color: var(--sl-color-accent); background: var(--sl-color-accent-low); color: var(--sl-color-accent-high); }
-  .inline-editor-tools { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
-  .inline-tool-group { display: flex; gap: .25rem; padding-right: .5rem; border-right: 1px solid var(--sl-color-gray-5); }
-  .inline-tool-group-end { margin-left: auto; padding: 0; border: 0; }
+  .inline-editor-tools { display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
+  .inline-tool-group { display: flex; gap: .2rem; padding-right: .4rem; border-right: 1px solid var(--sl-color-gray-5); }
+  .inline-tool-group-end { margin-left: 0; padding: 0; border: 0; }
   .inline-tool-group-end [data-inline-save] { border-color: var(--sl-color-accent); background: var(--sl-color-accent); color: white; }
   .inline-tool-group-end [data-inline-save]:disabled { opacity: .45; cursor: not-allowed; }
-  .inline-editor-status { min-height: 1.1rem; margin: 0; color: var(--sl-color-gray-3); font-size: .72rem; }
+  .inline-editor-status { min-height: 0; margin: 0; color: var(--sl-color-gray-3); font-size: .68rem; line-height: 1.35; }
   .inline-editor-dialog { width: min(28rem, calc(100vw - 2rem)); padding: 1.2rem; border: 1px solid var(--sl-color-gray-5); border-radius: 9px; background: var(--sl-color-bg); color: var(--sl-color-text); box-shadow: 0 18px 60px #0004; }
   .inline-editor-dialog::backdrop { background: #07150e88; backdrop-filter: blur(2px); }
   .inline-editor-dialog h2 { margin: 0 0 .55rem; font-size: 1rem; }
@@ -296,6 +367,8 @@
   .inline-editor-dialog input, .inline-editor-dialog textarea { width: 100%; box-sizing: border-box; padding: .55rem .65rem; border: 1px solid var(--sl-color-gray-5); border-radius: 5px; background: var(--sl-color-bg-nav); color: var(--sl-color-text); font: inherit; }
   .inline-dialog-actions { display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1rem; }
   .inline-dialog-actions button { padding: .45rem .75rem; border: 1px solid var(--sl-color-gray-5); border-radius: 5px; background: var(--sl-color-bg-nav); color: var(--sl-color-gray-2); cursor: pointer; }
+  .inline-dialog-actions button:disabled { opacity: .55; cursor: wait; }
   .inline-dialog-actions button[value='login'], .inline-dialog-actions button[value='apply'] { border-color: var(--sl-color-accent); background: var(--sl-color-accent); color: white; }
-  @media (max-width: 49.99rem) { .inline-editor-head > div { display: grid; gap: .15rem; } .inline-tool-group-end { margin-left: 0; } .inline-editor-tools { align-items: stretch; } }
+  .inline-dialog-error { margin: .5rem 0 0 !important; color: var(--sl-color-red-high) !important; font-size: .75rem !important; }
+  @media (max-width: 49.99rem) { .inline-note-editor { max-width: calc(100vw - 1rem); } .inline-editor-head > div { min-width: 0; } .inline-editor-head span { max-width: 11rem; } .inline-tool-group { border-right: 0; padding-right: 0; } .inline-editor-tools { align-items: stretch; } }
 </style>

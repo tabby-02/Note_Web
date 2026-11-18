@@ -33,7 +33,7 @@ GitHub Pages 托管 Astro/Starlight 的公开界面；Supabase 提供实时内�
 - [x] `/api/health`、树读取、编译原理 Markdown 读取和正文搜索在线检查通过。
 - [x] 公式、目录、搜索回归测试、Supabase 函数检查、Astro 检查通过。
 - [x] 阅读页轻量选区编辑、管理页响应式整理、移动端辅助文件把手定位修复并完成生产构建检查。
-- [ ] 将本次代码提交并推送 GitHub，让 GitHub Actions 发布包含 `.env.local` 公开配置的静态界面。
+- [x] 将本次代码提交并推送 GitHub，让 GitHub Actions 发布包含 `.env.local` 公开配置的静态界面。
 - [ ] 在已发布 Pages 地址上完成桌面/手机手工验收：登录、编辑保存、四种上传、搜索、恢复和动态新路径。
 - [ ] 增加定期数据库/Storage 导出和跨项目恢复演练。
 

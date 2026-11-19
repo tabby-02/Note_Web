@@ -586,6 +586,19 @@ async function saveMarkdown(request: Request, noteId: string): Promise<Response>
     const bytes = new TextEncoder().encode(body.content);
     const { error: storageError } = await db.storage.from(bucket).upload(objectKey, bytes, { contentType: 'text/markdown; charset=utf-8', upsert: false });
     if (storageError) throw storageError;
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+    const sha256 = [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+    const { error: assetError } = await db.from('note_assets').upsert({
+      note_id: noteId,
+      version_id: operationId,
+      relative_path: 'note.md',
+      object_key: objectKey,
+      role: 'source',
+      mime_type: 'text/markdown; charset=utf-8',
+      size_bytes: bytes.byteLength,
+      sha256,
+    }, { onConflict: 'version_id,relative_path' });
+    if (assetError) throw assetError;
     const { error: updateError } = await db.from('note_versions').update({ markdown_object_key: objectKey }).eq('id', operationId);
     if (updateError) throw updateError;
     await db.from('search_passages').delete().eq('version_id', operationId).neq('scope', 'topic');

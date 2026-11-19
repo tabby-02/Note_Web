@@ -1,5 +1,5 @@
 ---
-import { Bold, Ellipsis, Highlighter, Italic, Save, Strikethrough, X } from '@lucide/astro';
+import { Bold, Ellipsis, Highlighter, Italic, Save, Strikethrough, Undo2, X } from '@lucide/astro';
 ---
 
 <section class="inline-note-editor" data-inline-editor hidden aria-label="正文轻量编辑" role="toolbar">
@@ -7,8 +7,8 @@ import { Bold, Ellipsis, Highlighter, Italic, Save, Strikethrough, X } from '@lu
     <span data-inline-selection aria-live="polite"></span>
     <div class="inline-editor-actions">
       <button type="button" data-inline-save disabled aria-label="保存标注" title="保存"><Save /></button>
-      <button type="button" data-inline-cancel aria-label="取消待保存修改" title="取消修改"><X /></button>
-      <button type="button" data-inline-launch aria-label="关闭标注工具" title="关闭工具"><X /></button>
+      <button type="button" data-inline-cancel disabled aria-label="撤销本次未保存修改" title="撤销本次修改"><Undo2 /><span>撤销</span></button>
+      <button type="button" data-inline-launch aria-label="关闭标注工具" title="关闭工具栏"><X /></button>
     </div>
   </div>
   <div class="inline-editor-tools" data-inline-tools>
@@ -67,6 +67,7 @@ import { Bold, Ellipsis, Highlighter, Italic, Save, Strikethrough, X } from '@lu
     const selectionLabel = root.querySelector<HTMLElement>('[data-inline-selection]')!;
     const status = root.querySelector<HTMLElement>('[data-inline-status]')!;
     const save = root.querySelector<HTMLButtonElement>('[data-inline-save]')!;
+    const cancel = root.querySelector<HTMLButtonElement>('[data-inline-cancel]')!;
     const loginForm = dialog.querySelector<HTMLFormElement>('[data-inline-login-form]')!;
     const textForm = dialog.querySelector<HTMLFormElement>('[data-inline-text-form]')!;
     const password = dialog.querySelector<HTMLInputElement>('[data-inline-password]')!;
@@ -90,7 +91,7 @@ import { Bold, Ellipsis, Highlighter, Italic, Save, Strikethrough, X } from '@lu
     let toolbarRange: Range | null = null;
     let positionRevision = 0;
 
-    const say = (message: string) => { status.textContent = message; };
+    const say = (message: string, isError = false) => { status.textContent = message; status.dataset.state = isError ? 'error' : 'info'; };
     const normalize = (value: string) => value.replace(/\s+/g, ' ').trim();
     const protectedSelector = 'a,code,pre,table,img,video,svg,.katex,.hljs,.note-code-block';
     const closestBlock = (node: Node): HTMLElement | null => {
@@ -200,7 +201,7 @@ import { Bold, Ellipsis, Highlighter, Italic, Save, Strikethrough, X } from '@lu
       if (!selection) return say('请先选中正文中的一段文字。');
       const patched = patchSource(selection, operation, value, wrapper);
       if (patched === null) return say('该选区包含不能安全改写的 Markdown 结构，请在管理页检查源码。');
-      pending = patched; save.disabled = false; say('已预览修改，保存后对所有访客生效。'); selection = null; setToolbar(false); selectionLabel.textContent = '修改预览'; window.getSelection()?.removeAllRanges();
+      pending = patched; save.disabled = false; cancel.disabled = false; say('已预览修改，保存后对所有访客生效。'); selection = null; setToolbar(false); selectionLabel.textContent = '修改预览'; window.getSelection()?.removeAllRanges();
       document.dispatchEvent(new CustomEvent('notes:inline-preview', { detail: { noteId: note?.id, markdown: pending } }));
     };
     const openTextAction = (action: string) => {
@@ -237,17 +238,29 @@ import { Bold, Ellipsis, Highlighter, Italic, Save, Strikethrough, X } from '@lu
     save.addEventListener('click', () => void ensureAdmin(async () => {
       if (!note || !pending) return;
       save.disabled = true;
+      say('正在保存…');
       try {
         const response = await fetch(liveApiUrl(`/api/admin/notes/${encodeURIComponent(note.id)}/markdown`), { method: 'PUT', cache: 'no-store', headers: liveApiHeaders({ 'content-type': 'application/json', 'x-csrf-token': csrf }), body: JSON.stringify({ expectedVersion: note.version, content: pending }) });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(data.error || (response.status === 409 ? '笔记已被其他窗口修改，请刷新后重试。' : '保存失败，请稍后重试。'));
+        const responseText = await response.text();
+        let data: any = {};
+        try { data = responseText ? JSON.parse(responseText) : {}; } catch { /* Keep the HTTP status for non-JSON gateway errors. */ }
+        if (!response.ok) {
+          const detail = typeof data.error === 'string' && data.error.trim() ? data.error : `服务器返回 HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`;
+          throw new Error(response.status === 409 ? '笔记已被其他窗口修改，请刷新后重试。' : `保存失败：${detail}`);
+        }
+        if (!Number.isInteger(data.version)) throw new Error('保存失败：服务器未返回有效版本号，修改仍保留在当前页面。');
         note = { ...note, version: data.version, markdown: pending }; source = pending; pending = '';
+        cancel.disabled = true;
         say(`已发布版本 ${data.version}，正文和目录已更新。`);
         document.dispatchEvent(new CustomEvent('notes:note-saved', { detail: note }));
         hideToolbar();
-      } catch (error) { save.disabled = false; say(error instanceof Error ? error.message : '保存失败，请稍后重试。'); }
+      } catch (error) {
+        save.disabled = false;
+        const message = error instanceof TypeError ? '保存失败：无法连接在线笔记服务。请检查网络后重试；本次修改仍保留。' : error instanceof Error ? error.message : '保存失败：未知错误。本次修改仍保留。';
+        say(message, true);
+      }
     }));
-    root.querySelector<HTMLButtonElement>('[data-inline-cancel]')!.addEventListener('click', () => { pending = ''; save.disabled = true; selection = null; setToolbar(false); say('已撤销未保存预览。'); document.dispatchEvent(new CustomEvent('notes:inline-preview', { detail: { noteId: note?.id, markdown: source } })); });
+    cancel.addEventListener('click', () => { if (!pending) return; pending = ''; save.disabled = true; cancel.disabled = true; selection = null; setToolbar(false); say('已撤销未保存预览。'); document.dispatchEvent(new CustomEvent('notes:inline-preview', { detail: { noteId: note?.id, markdown: source } })); });
     loginForm.addEventListener('submit', async (event) => {
       event.preventDefault();
       if (dialogMode !== 'login') return;
@@ -291,7 +304,7 @@ import { Bold, Ellipsis, Highlighter, Italic, Save, Strikethrough, X } from '@lu
     document.addEventListener('notes:live-note', (event) => {
       const incoming = (event as CustomEvent<LiveNote>).detail;
       if (!incoming || incoming.type !== 'markdown' || typeof incoming.markdown !== 'string') return;
-      note = incoming; source = incoming.markdown; pending = ''; selection = null; toolbarClosed = false; hideToolbar(); save.disabled = true; moreMenu.hidden = true; say('');
+      note = incoming; source = incoming.markdown; pending = ''; selection = null; toolbarClosed = false; hideToolbar(); save.disabled = true; cancel.disabled = true; moreMenu.hidden = true; say('');
     });
   }
 </script>
@@ -304,12 +317,14 @@ import { Bold, Ellipsis, Highlighter, Italic, Save, Strikethrough, X } from '@lu
   .inline-note-editor[hidden], .inline-editor-tools[hidden], .inline-editor-more[hidden], .inline-editor-dialog [hidden] { display: none !important; }
   .inline-editor-head { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: .6rem; padding: 0 .12rem; }
   .inline-editor-head > span { display: block; max-width: 13rem; overflow: hidden; color: var(--sl-color-text); font-size: .76rem; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
-  .inline-editor-actions { display: flex; align-items: center; gap: .16rem; }
+  .inline-editor-actions { display: flex; align-items: center; gap: .34rem; }
   .inline-editor-head button, .inline-editor-tools button { display: inline-grid; width: 2rem; height: 2rem; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--sl-color-gray-2); cursor: pointer; }
   .inline-editor-head button svg, .inline-editor-tools button svg { width: 1rem; height: 1rem; stroke-width: 1.8; }
   .inline-editor-head [data-inline-save] { border-color: var(--sl-color-accent); background: var(--sl-color-accent); color: white; }
   .inline-editor-head [data-inline-save]:disabled { border-color: transparent; background: var(--sl-color-gray-6); color: var(--sl-color-gray-3); cursor: not-allowed; }
-  .inline-editor-head [data-inline-cancel] { color: var(--sl-color-red-high); }
+  .inline-editor-head [data-inline-cancel] { width: auto; min-width: 4.35rem; display: inline-flex; justify-content: center; gap: .28rem; padding: 0 .42rem; border-color: color-mix(in srgb, var(--sl-color-red-high) 24%, transparent); background: color-mix(in srgb, var(--sl-color-red-high) 8%, transparent); color: var(--sl-color-red-high); font: 600 .72rem/1 var(--sl-font); }
+  .inline-editor-head [data-inline-cancel]:disabled { border-color: transparent; background: transparent; color: var(--sl-color-gray-4); cursor: not-allowed; }
+  .inline-editor-head [data-inline-launch] { width: 1.8rem; color: var(--sl-color-gray-3); }
   .inline-editor-head button:hover:not(:disabled), .inline-editor-tools button:hover { border-color: var(--sl-color-gray-5); background: var(--sl-color-gray-6); color: var(--sl-color-text); }
   .inline-editor-tools { display: flex; align-items: center; gap: .22rem; }
   .inline-tool-group { display: flex; align-items: center; gap: .1rem; padding-right: .28rem; border-right: 1px solid var(--sl-color-gray-5); }
@@ -325,6 +340,7 @@ import { Bold, Ellipsis, Highlighter, Italic, Save, Strikethrough, X } from '@lu
   .inline-editor-more button:hover { background: var(--sl-color-gray-6); }
   .inline-editor-status { margin: 0; padding: 0 .15rem; color: var(--sl-color-gray-3); font-size: .66rem; line-height: 1.35; }
   .inline-editor-status:empty { display: none; }
+  .inline-editor-status[data-state='error'] { color: var(--sl-color-red-high); }
   :global(::highlight(note-inline-selection)) { background-color: #b8efce; color: inherit; }
   .inline-editor-dialog { width: min(28rem, calc(100vw - 2rem)); padding: 1.2rem; border: 1px solid var(--sl-color-gray-5); border-radius: 9px; background: var(--sl-color-bg); color: var(--sl-color-text); box-shadow: 0 18px 60px #0004; }
   .inline-editor-dialog::backdrop { background: #07150e88; backdrop-filter: blur(2px); }

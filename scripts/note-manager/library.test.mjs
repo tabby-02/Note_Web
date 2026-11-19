@@ -44,6 +44,27 @@ test('import preserves Markdown, formulas, code and all auxiliary files; rewrite
   assert.equal(listLibrary(root).noteCount, 1);
 });
 
+test('only embedded images enter media; image hyperlinks and unused images remain attachments', (t) => {
+  const { root, source, put } = fixture(t);
+  put('media/existing.png', png);
+  put('attachments/cited.png', png);
+  put('unused.png', png);
+  put('linked.png', png);
+  put('main.md', '# 分类\n![正文图片](media/existing.png)\n![原放附件目录的图片](attachments/cited.png)\n[打开辅助图片](linked.png)');
+  const result = importNote(root, { source, title: '图片归档', id: 'image-roles', parent: 'first' });
+  const folder = path.join(root, 'notes', result.slug);
+  const markdown = fs.readFileSync(path.join(folder, 'note.md'), 'utf8');
+  assert.match(markdown, /!\[正文图片\]\(media\/existing\.png\)/);
+  assert.match(markdown, /!\[原放附件目录的图片\]\(<media\/cited\.png>\)/);
+  assert.match(markdown, /\[打开辅助图片\]\(<attachments\/linked\.png>\)/);
+  assert.ok(fs.existsSync(path.join(folder, 'media/existing.png')));
+  assert.ok(fs.existsSync(path.join(folder, 'media/cited.png')));
+  assert.ok(fs.existsSync(path.join(folder, 'attachments/unused.png')));
+  assert.ok(fs.existsSync(path.join(folder, 'attachments/linked.png')));
+  assert.ok(!fs.existsSync(path.join(folder, 'media/media')));
+  assert.ok(!fs.existsSync(path.join(folder, 'attachments/attachments')));
+});
+
 test('mixed Typora math imports unchanged while genuinely invalid formulas remain blocked', (t) => {
   const { root, source, put } = fixture(t);
   const markdown = String.raw`# GraphRAG

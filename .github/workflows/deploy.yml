@@ -27,9 +27,12 @@ jobs:
       - uses: actions/configure-pages@v5
       - run: npm run check
       - run: npm run test:markdown
+      - run: npm run test:assets
+      - run: npm run test:inline-edit
       - run: npm run test:reading
       - run: npm run supabase:check
       - run: npm run supabase:import:dry
+      - run: npm run test:sync
       - run: npm run test:search
       - run: npm run test:manager
       - run: npm run build

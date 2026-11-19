@@ -11,7 +11,7 @@ function count(items: Heading[]): number { return items.reduce((sum, item) => su
 
 <aside class="note-outline" data-note-outline aria-label="本页目录">
   <div class="directory-header">
-    <span class="directory-title">本页目录 <small>{count(headings)}</small></span>
+    <span class="directory-title">本页目录 <small data-outline-count>{count(headings)}</small></span>
     <DirectoryToggle directory="outline" controls="note-page-outline" label="本页目录" />
   </div>
   <div class="outline-bulk-actions">

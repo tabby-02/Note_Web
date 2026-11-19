@@ -187,3 +187,9 @@ button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px soli
 }
 
 .attachment-dock[hidden] { display: none !important; }
+/* A note's hand-written table of contents remains available without duplicating
+   the website's chapter rail or filling it with another “目录” heading. */
+.note-prose .note-original-toc { margin-block: 1.4rem; border: 1px solid var(--sl-color-gray-5); border-radius: 10px; background: var(--sl-color-gray-7, var(--sl-color-bg)); }
+.note-prose .note-original-toc > summary { padding: .8rem 1rem; cursor: pointer; color: var(--sl-color-text); font-size: .85rem; font-weight: 600; }
+.note-prose .note-original-toc > summary span { display: inline; margin-left: .8rem; color: var(--sl-color-gray-3); font-size: .72rem; font-weight: 400; }
+.note-prose .note-original-toc > ul, .note-prose .note-original-toc > ol { padding: 0 1.5rem 1rem 2.25rem; font-size: .85rem; }

@@ -1,31 +1,35 @@
+---
+import { Bold, Ellipsis, Highlighter, Italic, Save, Strikethrough, X } from '@lucide/astro';
+---
+
 <section class="inline-note-editor" data-inline-editor hidden aria-label="正文轻量编辑" role="toolbar">
   <div class="inline-editor-head">
-    <div>
-      <strong aria-hidden="true">标注</strong>
-      <span data-inline-selection>先在正文中选中一段文字</span>
+    <span data-inline-selection aria-live="polite"></span>
+    <div class="inline-editor-actions">
+      <button type="button" data-inline-save disabled aria-label="保存标注" title="保存"><Save /></button>
+      <button type="button" data-inline-cancel aria-label="取消待保存修改" title="取消修改"><X /></button>
+      <button type="button" data-inline-launch aria-label="关闭标注工具" title="关闭工具"><X /></button>
     </div>
-    <button type="button" data-inline-launch aria-label="关闭标注工具" title="关闭标注工具">×</button>
   </div>
-  <div class="inline-editor-tools" data-inline-tools hidden>
-    <div class="inline-tool-group" aria-label="文字标注">
-      <button type="button" data-inline-format="bold" title="加粗选中文字"><b>B</b></button>
-      <button type="button" data-inline-format="italic" title="斜体选中文字"><i>I</i></button>
-      <button type="button" data-inline-format="strike" title="删除线选中文字"><s>S</s></button>
-      <button type="button" data-inline-format="mark" title="高亮选中文字">高亮</button>
-      <button type="button" data-inline-format="yellow" title="黄色底色">黄</button>
-      <button type="button" data-inline-format="green" title="绿色底色">绿</button>
-      <button type="button" data-inline-format="blue" title="蓝色底色">蓝</button>
+  <div class="inline-editor-tools" data-inline-tools>
+    <div class="inline-tool-group" aria-label="文字格式">
+      <button type="button" data-inline-format="bold" aria-label="加粗" title="加粗"><Bold /></button>
+      <button type="button" data-inline-format="italic" aria-label="斜体" title="斜体"><Italic /></button>
+      <button type="button" data-inline-format="strike" aria-label="删除线" title="删除线"><Strikethrough /></button>
+      <button type="button" data-inline-format="mark" aria-label="荧光高亮" title="荧光高亮"><Highlighter /></button>
     </div>
-    <div class="inline-tool-group" aria-label="文字修改">
-      <button type="button" data-inline-text="replace">替换</button>
-      <button type="button" data-inline-text="before">前插</button>
-      <button type="button" data-inline-text="after">后插</button>
-      <button type="button" data-inline-text="delete">删除</button>
+    <div class="inline-tool-group inline-color-group" aria-label="文字底色">
+      <button type="button" data-inline-format="yellow" aria-label="黄色底色" title="黄色底色"><span class="inline-color inline-color-yellow"></span></button>
+      <button type="button" data-inline-format="green" aria-label="绿色底色" title="绿色底色"><span class="inline-color inline-color-green"></span></button>
+      <button type="button" data-inline-format="blue" aria-label="蓝色底色" title="蓝色底色"><span class="inline-color inline-color-blue"></span></button>
     </div>
-    <div class="inline-tool-group inline-tool-group-end">
-      <button type="button" data-inline-save disabled>保存改动</button>
-      <button type="button" data-inline-cancel>取消</button>
-    </div>
+    <button class="inline-more-toggle" type="button" data-inline-more aria-label="更多文字操作" title="更多操作"><Ellipsis /></button>
+  </div>
+  <div class="inline-editor-more" data-inline-more-menu hidden>
+    <button type="button" data-inline-text="replace">替换文字</button>
+    <button type="button" data-inline-text="before">在前面插入</button>
+    <button type="button" data-inline-text="after">在后面插入</button>
+    <button type="button" data-inline-text="delete">删除选区</button>
   </div>
   <p class="inline-editor-status" data-inline-status role="status" aria-live="polite"></p>
 </section>
@@ -48,10 +52,11 @@
 
 <script>
   import { liveApiHeaders, liveApiUrl } from '../lib/live-backend';
+  import { computePosition, offset, flip, shift } from '@floating-ui/dom';
+  import { mapSelectionToMarkdown } from '../lib/markdown-edit.mjs';
 
   type LiveNote = { id: string; path: string; type: string; title: string; version: number; markdown?: string; assets?: Array<{ relative_path: string; url: string }> };
-  type SelectionInfo = { block: HTMLElement; start: number; end: number; text: string };
-  type SourceCandidate = { raw: string; start: number; plain: string; map: number[]; normalized: string; normalizedMap: number[] };
+  type SelectionInfo = { block: HTMLElement; start: number; end: number; startLine: number; endLine: number; text: string };
 
   const root = document.querySelector<HTMLElement>('[data-inline-editor]');
   const layout = document.querySelector<HTMLElement>('.note-reading-layout[data-note-id]');
@@ -71,6 +76,8 @@
     const loginError = dialog.querySelector<HTMLElement>('[data-inline-login-error]')!;
     const loginSubmit = loginForm.querySelector<HTMLButtonElement>('button[type="submit"]')!;
     const launch = root.querySelector<HTMLButtonElement>('[data-inline-launch]')!;
+    const moreToggle = root.querySelector<HTMLButtonElement>('[data-inline-more]')!;
+    const moreMenu = root.querySelector<HTMLElement>('[data-inline-more-menu]')!;
     let note: LiveNote | null = null;
     let source = '';
     let pending = '';
@@ -80,6 +87,8 @@
     let dialogMode: 'login' | 'text' = 'login';
     let toolbarRect: DOMRect | null = null;
     let toolbarClosed = false;
+    let toolbarRange: Range | null = null;
+    let positionRevision = 0;
 
     const say = (message: string) => { status.textContent = message; };
     const normalize = (value: string) => value.replace(/\s+/g, ' ').trim();
@@ -96,113 +105,40 @@
       return Boolean(fragment.querySelector(protectedSelector)) || Boolean(block.closest(protectedSelector));
     };
     const textOffset = (block: HTMLElement, container: Node, offset: number) => {
-      const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
-      let total = 0;
-      let current: Node | null;
-      while ((current = walker.nextNode())) {
-        if (current === container) return total + offset;
-        total += current.textContent?.length ?? 0;
-      }
-      return total;
-    };
-    const sourceMap = (raw: string): SourceCandidate => {
-      const chars: string[] = [];
-      const map: number[] = [];
-      let lineStart = true;
-      for (let index = 0; index < raw.length; index += 1) {
-        const char = raw[index];
-        if (char === '<') {
-          const end = raw.indexOf('>', index + 1);
-          if (end >= 0) { index = end; continue; }
-        }
-        if (char === '!' && raw[index + 1] === '[') {
-          const end = raw.indexOf(')', index + 2);
-          if (end >= 0) { index = end; continue; }
-        }
-        if (char === '[' && raw.indexOf('](', index + 1) >= 0) continue;
-        if (char === ']' && raw[index + 1] === '(') {
-          const end = raw.indexOf(')', index + 2);
-          if (end >= 0) { index = end; continue; }
-        }
-        if (char === '\\' && index + 1 < raw.length) { chars.push(raw[index + 1]); map.push(index + 1); index += 1; lineStart = false; continue; }
-        if (lineStart && (char === '#' || char === '>' || char === '-' || char === '*' || char === '+' || /\d/.test(char))) {
-          let cursor = index;
-          while (cursor < raw.length && /[#>\-*+\d.)、\s]/.test(raw[cursor])) cursor += 1;
-          index = cursor - 1; lineStart = false; continue;
-        }
-        if (char === '*' || char === '_' || char === '~' || char === '`') continue;
-        chars.push(char); map.push(index); lineStart = char === '\n' || char === '\r';
-      }
-      const plain = chars.join('');
-      const normalizedMap: number[] = [];
-      let normalized = '';
-      let whitespace = false;
-      for (let index = 0; index < plain.length; index += 1) {
-        if (/\s/.test(plain[index])) { whitespace = true; continue; }
-        if (whitespace && normalized) { normalized += ' '; normalizedMap.push(map[index - 1] ?? map[index]); }
-        whitespace = false; normalized += plain[index]; normalizedMap.push(map[index]);
-      }
-      return { raw, start: 0, plain, map, normalized: normalized.trim(), normalizedMap };
-    };
-    const candidates = (markdown: string) => {
-      const result: SourceCandidate[] = []; let cursor = 0;
-      for (const raw of markdown.split(/\n{2,}/)) {
-        const start = markdown.indexOf(raw, cursor); if (start < 0) continue;
-        const candidate = sourceMap(raw); result.push({ ...candidate, start }); cursor = start + raw.length;
-      }
-      return result.filter((candidate) => candidate.normalized);
+      const prefix = document.createRange();
+      prefix.selectNodeContents(block);
+      prefix.setEnd(container, offset);
+      return prefix.cloneContents().textContent?.length ?? 0;
     };
     const mapSelection = (range: Range): SelectionInfo | null => {
+      if (!note || !source) return null;
       const startBlock = closestBlock(range.startContainer); const endBlock = closestBlock(range.endContainer);
       if (!startBlock || startBlock !== endBlock || hasProtectedContent(range, startBlock)) return null;
       const start = textOffset(startBlock, range.startContainer, range.startOffset);
       const end = textOffset(startBlock, range.endContainer, range.endOffset);
       const text = range.toString();
       if (!text.trim() || end <= start) return null;
-      return { block: startBlock, start, end, text };
+      const startLine = Number(startBlock.dataset.sourceStart);
+      const endLine = Number(startBlock.dataset.sourceEnd);
+      if (!Number.isInteger(startLine) || !Number.isInteger(endLine)) return null;
+      return { block: startBlock, start, end, startLine, endLine, text };
     };
     const patchSource = (info: SelectionInfo, operation: string, value = '', wrapper?: { before: string; after: string }): string | null => {
-      const blocks = candidates(source);
-      const blockText = normalize(info.block.textContent ?? '');
-      const selected = normalize(info.text);
-      const blockIndex = [...article.querySelectorAll<HTMLElement>('[data-search-passage]')].indexOf(info.block);
-      let best: SourceCandidate | undefined; let bestScore = Infinity;
-      blocks.forEach((candidate, index) => {
-        if (!candidate.normalized.includes(selected) || (!candidate.normalized.includes(blockText) && !blockText.includes(candidate.normalized))) return;
-        const score = Math.abs(index - Math.max(0, blockIndex));
-        if (score < bestScore) { best = candidate; bestScore = score; }
-      });
-      if (!best) return null;
-      const prefix = normalize((info.block.textContent ?? '').slice(0, info.start));
-      const startHint = Math.max(0, best.normalized.indexOf(prefix));
-      let match = best.normalized.indexOf(selected, startHint);
-      if (match < 0) match = best.normalized.indexOf(selected);
-      if (match < 0) return null;
-      const rawStart = best.normalizedMap[match];
-      const rawEndIndex = best.normalizedMap[match + selected.length - 1];
-      if (rawStart === undefined || rawEndIndex === undefined) return null;
-      const rawEnd = rawEndIndex + 1;
-      const before = source.slice(0, best.start);
-      const blockStart = best.start;
-      const selectedRaw = best.raw.slice(rawStart, rawEnd);
+      const base = pending || source;
+      const mapped = mapSelectionToMarkdown(base, info.startLine, info.endLine, info.block.textContent ?? '', info.start, info.end);
+      if (!mapped) return null;
+      const selectedRaw = base.slice(mapped.start, mapped.end);
       const replacement = wrapper ? `${wrapper.before}${selectedRaw}${wrapper.after}` : operation === 'delete' ? '' : operation === 'before' ? `${value}${selectedRaw}` : operation === 'after' ? `${selectedRaw}${value}` : operation === 'replace' ? value : selectedRaw;
-      if (operation === 'delete' || operation === 'before' || operation === 'after' || operation === 'replace') return `${before}${best.raw.slice(0, rawStart)}${replacement}${best.raw.slice(rawEnd)}${source.slice(blockStart + best.raw.length)}`;
-      return `${before}${best.raw.slice(0, rawStart)}${replacement}${best.raw.slice(rawEnd)}${source.slice(blockStart + best.raw.length)}`;
+      return `${base.slice(0, mapped.start)}${replacement}${base.slice(mapped.end)}`;
     };
-    const positionToolbar = () => {
+    const positionToolbar = async () => {
       if (root.hidden || !toolbarRect) return;
-      const margin = 8;
-      const gap = 10;
-      const width = root.offsetWidth;
-      const height = root.offsetHeight;
-      const left = Math.max(margin, Math.min(window.innerWidth - width - margin, toolbarRect.left + (toolbarRect.width - width) / 2));
-      const above = toolbarRect.top - height - gap;
-      const below = toolbarRect.bottom + gap;
-      const aboveSpace = toolbarRect.top - gap - margin;
-      const belowSpace = window.innerHeight - toolbarRect.bottom - gap - margin;
-      const top = height <= aboveSpace ? above : height <= belowSpace ? below : aboveSpace >= belowSpace ? Math.max(margin, above) : Math.min(window.innerHeight - height - margin, below);
-      root.style.left = `${Math.round(left)}px`;
-      root.style.top = `${Math.round(top)}px`;
+      const revision = ++positionRevision;
+      const anchor = { getBoundingClientRect: () => toolbarRange?.startContainer.isConnected ? toolbarRange.getBoundingClientRect() : toolbarRect!, contextElement: article };
+      const position = await computePosition(anchor, root, { placement: 'top', strategy: 'fixed', middleware: [offset(10), flip({ padding: 8 }), shift({ padding: 8 })] });
+      if (revision !== positionRevision || root.hidden) return;
+      root.style.left = `${Math.round(position.x)}px`;
+      root.style.top = `${Math.round(position.y)}px`;
     };
     const showToolbar = (rect: DOMRect) => {
       toolbarRect = rect;
@@ -213,10 +149,12 @@
     };
     const hideToolbar = () => {
       root.hidden = true;
-      toolbarRect = null;
+      toolbarRect = null; toolbarRange = null;
     };
     const setToolbar = (enabled: boolean, rect?: DOMRect) => {
       selectionLabel.textContent = enabled && selection ? normalize(selection.text).slice(0, 80) : '';
+      tools.hidden = !enabled;
+      if (!enabled) moreMenu.hidden = true;
       if (enabled && rect && !toolbarClosed) showToolbar(rect);
       else if (!pending) hideToolbar();
       else requestAnimationFrame(positionToolbar);
@@ -225,13 +163,19 @@
       const current = window.getSelection();
       if (!current || current.rangeCount === 0 || current.isCollapsed || !article.contains(current.anchorNode) || !article.contains(current.focusNode)) {
         selection = null;
+        if ('highlights' in CSS) (CSS as any).highlights.delete('note-inline-selection');
         if (!pending) hideToolbar();
         return;
       }
-      const mapped = mapSelection(current.getRangeAt(0));
+      toolbarRange = current.getRangeAt(0).cloneRange();
+      const mapped = mapSelection(toolbarRange);
       selection = mapped;
+      if (mapped && 'highlights' in CSS && 'Highlight' in window) {
+        const highlights = (CSS as any).highlights as Map<string, unknown>;
+        highlights.set('note-inline-selection', new (window as any).Highlight(current.getRangeAt(0).cloneRange()));
+      } else if ('highlights' in CSS) (CSS as any).highlights.delete('note-inline-selection');
       setToolbar(Boolean(mapped), mapped ? current.getRangeAt(0).getBoundingClientRect() : undefined);
-      if (!mapped) say('只能编辑同一段纯文本；公式、链接、代码、图片和表格请到管理页修改。');
+      if (!mapped) say('选区需要位于同一个普通正文块内；公式、链接、代码、图片和表格请到管理页修改。');
     };
     const openDialog = (mode: 'login' | 'text') => {
       dialogMode = mode;
@@ -255,8 +199,9 @@
     const applyPatch = (operation: string, value = '', wrapper?: { before: string; after: string }) => {
       if (!selection) return say('请先选中正文中的一段文字。');
       const patched = patchSource(selection, operation, value, wrapper);
-      if (patched === null) return say('没有在原 Markdown 中找到这段文字，请改用管理页源码编辑。');
-      pending = patched; save.disabled = false; say('改动已暂存，确认内容后点击“保存改动”。'); selection = null; setToolbar(false); window.getSelection()?.removeAllRanges();
+      if (patched === null) return say('该选区包含不能安全改写的 Markdown 结构，请在管理页检查源码。');
+      pending = patched; save.disabled = false; say('已预览修改，保存后对所有访客生效。'); selection = null; setToolbar(false); selectionLabel.textContent = '修改预览'; window.getSelection()?.removeAllRanges();
+      document.dispatchEvent(new CustomEvent('notes:inline-preview', { detail: { noteId: note?.id, markdown: pending } }));
     };
     const openTextAction = (action: string) => {
       if (!selection) return say('请先选中正文中的一段文字。');
@@ -279,11 +224,14 @@
       ensureAdmin(() => applyPatch('wrap', '', wrapper));
     }));
     root.querySelectorAll<HTMLButtonElement>('[data-inline-text]').forEach((button) => button.addEventListener('click', () => openTextAction(button.dataset.inlineText!)));
+    moreToggle.addEventListener('pointerdown', (event) => event.preventDefault());
+    moreToggle.addEventListener('click', () => { moreMenu.hidden = !moreMenu.hidden; moreToggle.setAttribute('aria-expanded', String(!moreMenu.hidden)); requestAnimationFrame(positionToolbar); });
     launch.addEventListener('click', () => {
       if (pending) { say('请先保存或取消当前改动。'); return; }
       toolbarClosed = true;
       selection = null;
       window.getSelection()?.removeAllRanges();
+      if ('highlights' in CSS) (CSS as any).highlights.delete('note-inline-selection');
       hideToolbar();
     });
     save.addEventListener('click', () => void ensureAdmin(async () => {
@@ -299,7 +247,7 @@
         hideToolbar();
       } catch (error) { save.disabled = false; say(error instanceof Error ? error.message : '保存失败，请稍后重试。'); }
     }));
-    root.querySelector<HTMLButtonElement>('[data-inline-cancel]')!.addEventListener('click', () => { pending = ''; save.disabled = true; selection = null; setToolbar(false); say('已取消本次轻量改动。'); });
+    root.querySelector<HTMLButtonElement>('[data-inline-cancel]')!.addEventListener('click', () => { pending = ''; save.disabled = true; selection = null; setToolbar(false); say('已撤销未保存预览。'); document.dispatchEvent(new CustomEvent('notes:inline-preview', { detail: { noteId: note?.id, markdown: source } })); });
     loginForm.addEventListener('submit', async (event) => {
       event.preventDefault();
       if (dialogMode !== 'login') return;
@@ -326,6 +274,11 @@
     });
     dialog.querySelectorAll<HTMLButtonElement>('[data-inline-dialog-cancel]').forEach((button) => button.addEventListener('click', () => { actionAfterLogin = null; dialog.close(); }));
     dialog.addEventListener('close', () => { loginForm.hidden = true; textForm.hidden = true; loginSubmit.disabled = false; });
+    document.addEventListener('selectionchange', () => {
+      if (dialog.open || root.contains(document.activeElement)) return;
+      requestAnimationFrame(rememberSelection);
+    });
+    window.addEventListener('beforeunload', (event) => { if (pending) { event.preventDefault(); } });
     article.addEventListener('mouseup', rememberSelection); article.addEventListener('keyup', rememberSelection);
     window.addEventListener('scroll', positionToolbar, { passive: true });
     window.addEventListener('resize', positionToolbar);
@@ -338,27 +291,41 @@
     document.addEventListener('notes:live-note', (event) => {
       const incoming = (event as CustomEvent<LiveNote>).detail;
       if (!incoming || incoming.type !== 'markdown' || typeof incoming.markdown !== 'string') return;
-      note = incoming; source = incoming.markdown; pending = ''; selection = null; toolbarClosed = false; hideToolbar(); save.disabled = true; say('');
+      note = incoming; source = incoming.markdown; pending = ''; selection = null; toolbarClosed = false; hideToolbar(); save.disabled = true; moreMenu.hidden = true; say('');
     });
   }
 </script>
 
 <style>
-  .inline-note-editor { position: fixed; z-index: 90; display: grid; width: max-content; max-width: min(44rem, calc(100vw - 1rem)); gap: .35rem; margin: 0; padding: .42rem .5rem; border: 1px solid color-mix(in srgb, var(--sl-color-accent) 28%, var(--sl-color-gray-5)); border-radius: 9px; background: color-mix(in srgb, var(--sl-color-bg) 96%, transparent); box-shadow: 0 8px 26px #07150e26, 0 1px 4px #07150e18; backdrop-filter: blur(12px); }
-  .inline-note-editor[hidden], .inline-editor-tools[hidden], .inline-editor-dialog [hidden] { display: none !important; }
-  .inline-editor-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
-  .inline-editor-head > div { display: flex; min-width: 0; align-items: center; gap: .45rem; }
-  .inline-editor-head strong { color: var(--sl-color-accent-high); font-size: .7rem; font-weight: 750; letter-spacing: .02em; white-space: nowrap; }
-  .inline-editor-head span { display: block; max-width: 16rem; overflow: hidden; color: var(--sl-color-gray-3); font-size: .68rem; text-overflow: ellipsis; white-space: nowrap; }
-  .inline-editor-head button, .inline-editor-tools button { min-height: 1.8rem; padding: .2rem .48rem; border: 1px solid var(--sl-color-gray-5); border-radius: 5px; background: var(--sl-color-bg); color: var(--sl-color-gray-2); font: .72rem/1.25 var(--sl-font); cursor: pointer; }
-  .inline-editor-head button { width: 1.8rem; padding: 0; color: var(--sl-color-gray-3); font-size: 1rem; line-height: 1; }
-  .inline-editor-head button:hover, .inline-editor-tools button:hover { border-color: var(--sl-color-accent); background: var(--sl-color-accent-low); color: var(--sl-color-accent-high); }
-  .inline-editor-tools { display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
-  .inline-tool-group { display: flex; gap: .2rem; padding-right: .4rem; border-right: 1px solid var(--sl-color-gray-5); }
-  .inline-tool-group-end { margin-left: 0; padding: 0; border: 0; }
-  .inline-tool-group-end [data-inline-save] { border-color: var(--sl-color-accent); background: var(--sl-color-accent); color: white; }
-  .inline-tool-group-end [data-inline-save]:disabled { opacity: .45; cursor: not-allowed; }
-  .inline-editor-status { min-height: 0; margin: 0; color: var(--sl-color-gray-3); font-size: .68rem; line-height: 1.35; }
+  /* Starlight applies paragraph spacing to every adjacent descendant. This
+     toolbar is UI inside a Markdown wrapper; only its explicit gaps may space it. */
+  .inline-note-editor :global(*) { margin: 0 !important; }
+  .inline-note-editor { position: fixed; z-index: 120; display: grid; width: max-content; max-width: min(23rem, calc(100vw - 1rem)); gap: .35rem; margin: 0; padding: .42rem; border: 1px solid color-mix(in srgb, var(--sl-color-accent) 32%, var(--sl-color-gray-5)); border-radius: 10px; background: color-mix(in srgb, var(--sl-color-bg) 97%, transparent); box-shadow: 0 10px 32px #07150e2b, 0 2px 8px #07150e18; backdrop-filter: blur(16px); }
+  .inline-note-editor[hidden], .inline-editor-tools[hidden], .inline-editor-more[hidden], .inline-editor-dialog [hidden] { display: none !important; }
+  .inline-editor-head { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: .6rem; padding: 0 .12rem; }
+  .inline-editor-head > span { display: block; max-width: 13rem; overflow: hidden; color: var(--sl-color-text); font-size: .76rem; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+  .inline-editor-actions { display: flex; align-items: center; gap: .16rem; }
+  .inline-editor-head button, .inline-editor-tools button { display: inline-grid; width: 2rem; height: 2rem; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--sl-color-gray-2); cursor: pointer; }
+  .inline-editor-head button svg, .inline-editor-tools button svg { width: 1rem; height: 1rem; stroke-width: 1.8; }
+  .inline-editor-head [data-inline-save] { border-color: var(--sl-color-accent); background: var(--sl-color-accent); color: white; }
+  .inline-editor-head [data-inline-save]:disabled { border-color: transparent; background: var(--sl-color-gray-6); color: var(--sl-color-gray-3); cursor: not-allowed; }
+  .inline-editor-head [data-inline-cancel] { color: var(--sl-color-red-high); }
+  .inline-editor-head button:hover:not(:disabled), .inline-editor-tools button:hover { border-color: var(--sl-color-gray-5); background: var(--sl-color-gray-6); color: var(--sl-color-text); }
+  .inline-editor-tools { display: flex; align-items: center; gap: .22rem; }
+  .inline-tool-group { display: flex; align-items: center; gap: .1rem; padding-right: .28rem; border-right: 1px solid var(--sl-color-gray-5); }
+  .inline-tool-group button[aria-pressed='true'] { background: var(--sl-color-accent-low); color: var(--sl-color-accent-high); }
+  .inline-color-group { gap: .25rem; }
+  .inline-color { display: block; width: 1rem; height: 1rem; border: 1px solid #0002; border-radius: 50%; box-shadow: inset 0 0 0 2px var(--sl-color-bg); }
+  .inline-color-yellow { background: #f5cf45; }
+  .inline-color-green { background: #65bd86; }
+  .inline-color-blue { background: #61a7e8; }
+  .inline-more-toggle { margin-left: auto !important; }
+  .inline-editor-more { display: grid; grid-template-columns: 1fr 1fr; gap: .15rem; padding: .3rem 0 0; border-top: 1px solid var(--sl-color-gray-5); }
+  .inline-editor-more button { padding: .48rem .58rem; border: 0; border-radius: 4px; background: transparent; color: var(--sl-color-text); text-align: left; font: .76rem/1.3 var(--sl-font); cursor: pointer; }
+  .inline-editor-more button:hover { background: var(--sl-color-gray-6); }
+  .inline-editor-status { margin: 0; padding: 0 .15rem; color: var(--sl-color-gray-3); font-size: .66rem; line-height: 1.35; }
+  .inline-editor-status:empty { display: none; }
+  :global(::highlight(note-inline-selection)) { background-color: #b8efce; color: inherit; }
   .inline-editor-dialog { width: min(28rem, calc(100vw - 2rem)); padding: 1.2rem; border: 1px solid var(--sl-color-gray-5); border-radius: 9px; background: var(--sl-color-bg); color: var(--sl-color-text); box-shadow: 0 18px 60px #0004; }
   .inline-editor-dialog::backdrop { background: #07150e88; backdrop-filter: blur(2px); }
   .inline-editor-dialog h2 { margin: 0 0 .55rem; font-size: 1rem; }
@@ -370,5 +337,5 @@
   .inline-dialog-actions button:disabled { opacity: .55; cursor: wait; }
   .inline-dialog-actions button[value='login'], .inline-dialog-actions button[value='apply'] { border-color: var(--sl-color-accent); background: var(--sl-color-accent); color: white; }
   .inline-dialog-error { margin: .5rem 0 0 !important; color: var(--sl-color-red-high) !important; font-size: .75rem !important; }
-  @media (max-width: 49.99rem) { .inline-note-editor { max-width: calc(100vw - 1rem); } .inline-editor-head > div { min-width: 0; } .inline-editor-head span { max-width: 11rem; } .inline-tool-group { border-right: 0; padding-right: 0; } .inline-editor-tools { align-items: stretch; } }
+  @media (max-width: 49.99rem) { .inline-note-editor { max-width: calc(100vw - 1rem); } .inline-editor-head > span { max-width: 9rem; } }
 </style>

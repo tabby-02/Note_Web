@@ -17,9 +17,9 @@ GitHub Pages 托管 Astro/Starlight 的公开界面；Supabase 提供实时内�
 
 - 语义树和叶子类型仍以 `notes/taxonomy.yml`、叶子 `note.yml` 为 Git 源码备份。
 - Markdown、Word、图片集的主文件和附件在 Storage 中按版本保存；数据库保存原始相对路径，因此 Unicode 文件夹名称仍可完整展示。
-- Markdown 图片引用会映射到签名 Storage URL，不再将已引用图片重复列入附件；正文、公式、代码高亮、Typora 换行和 `:yum:` 表情使用同一解析规则。
+- Markdown 正文图片只解析 `media/` 中的资源并映射到签名 Storage URL；附件图片不会作为正文图片兜底。导入和发布校验 Markdown/HTML 嵌入图片引用，普通超链接图片属于附件。正文、公式、代码高亮、Typora 换行和 `:yum:` 表情使用同一解析规则。
 - 搜索只索引分类、章节和主文件正文；每个段落保留独立锚点，单文件多处命中分别返回。
-- 管理页支持源码编辑、预览、高亮、预设底色、主文件/图片/附件/整文件夹上传、新建、重命名、移动、软删除、恢复和历史版本恢复；公开阅读页提供受管理员会话保护的轻量选区标注，复杂节点继续由管理页源码编辑。
+- 管理页支持源码编辑、预览、高亮、预设底色、主文件/图片/附件/整文件夹上传、新建、重命名、移动、软删除、恢复和历史版本恢复；公开阅读页的轻量标注使用 DOM Range 与 Markdown 源行映射精确编辑选区，提供即时预览和撤销，复杂节点继续由管理页源码编辑。
 
 ## 执行状态
 
@@ -33,6 +33,7 @@ GitHub Pages 托管 Astro/Starlight 的公开界面；Supabase 提供实时内�
 - [x] `/api/health`、树读取、编译原理 Markdown 读取和正文搜索在线检查通过。
 - [x] 公式、目录、搜索回归测试、Supabase 函数检查、Astro 检查通过。
 - [x] 阅读页轻量选区编辑、管理页响应式整理、移动端辅助文件把手定位修复并完成生产构建检查。
+- [x] 按本地删除和图片归位结果同步 10 篇云端资源清单：10 篇升至 v2，删除 96 个旧附件路径，新增 6 个 `media/` 图片路径；发布后 23 篇资源哈希全部一致，目录无差异。
 - [x] 将本次代码提交并推送 GitHub，让 GitHub Actions 发布包含 `.env.local` 公开配置的静态界面。
 - [ ] 在已发布 Pages 地址上完成桌面/手机手工验收：登录、编辑保存、四种上传、搜索、恢复和动态新路径。
 - [ ] 增加定期数据库/Storage 导出和跨项目恢复演练。
@@ -51,6 +52,8 @@ npm run build
 首次或更换管理员密码时，在项目根目录运行 `npm run supabase:secrets`；密码在本机隐藏输入，不要写入聊天或 Git。初次导入/重新迁移需要本机忽略文件 `.env.import.local` 中的 service-role key，导入脚本要求 `--confirm-initial-import`，并会检查目录、版本、资源、搜索段落和审计表均为空；不要把该文件提交。日常同步使用 `npm run supabase:sync:check`，不写云端；`npm run supabase:sync:snapshot` 将活动版本下载到被忽略的本地快照目录并记录哈希基线。
 
 ## 维护方式
+
+Markdown 主格式的管理体验改进见 `MODERNIZATION_PLAN.md`。管理页已接入 CodeMirror 6 和冲突差异比较；现有 Supabase schema、staging 与原子发布保持不变，不需要数据库迁移。`npm run supabase:sync:review` 生成本机逐文件只读报告。共同基线升级为 schemaVersion 2，下载不一致快照不再错误重置共同祖先；旧基线需按未知差异审阅。`npm run supabase:sync:publish-local` 可预演严格限定为文件新增、删除、移动的差异，并在显式 `--publish` 后以 expectedVersion 发布完整资源清单；共享路径内容变化、分类差异或图片引用错误都会停止。
 
 笔记内容修改：打开线上 `/admin/`，输入管理员密码，保存后立即可见，不需要 Astro 构建。代码、组件、分类源文件或静态回退页面修改：本机运行检查后提交 Git，GitHub Actions 重新发布 Pages。Supabase 内容和 Git 源码是两套备份。网页编辑后若要继续改本地文件，先运行 `npm run supabase:sync:snapshot`，再运行 `npm run supabase:sync:check`；双方同时修改时以快照和本地文件做人工合并，最终通过管理页按最新版本发布，避免旧文件覆盖云端。恢复历史版本优先使用管理页，应用代码故障则回退 Git 提交。
 

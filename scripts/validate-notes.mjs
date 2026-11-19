@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import * as cheerio from 'cheerio';
 import { parse } from 'yaml';
 import { flattenLeaves, loadTaxonomy } from './taxonomy.mjs';
-import { createNoteMarkdownParser, renderNoteMarkdown, resolveHeadingFragment } from '../src/lib/note-markdown.mjs';
+import { createNoteMarkdownParser, markdownImageAssetPath, renderNoteMarkdown, resolveHeadingFragment } from '../src/lib/note-markdown.mjs';
 import { selectMarkdownSections, splitMarkdownSections } from './note-sections.mjs';
 import { inspectGallery } from '../src/lib/gallery.mjs';
 
@@ -61,6 +61,14 @@ function localFile(leafPath, value) {
   return candidates.find((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isFile()) ?? null;
 }
 
+function localMediaFile(leafPath, value) {
+  const relative = markdownImageAssetPath(value ?? '');
+  if (!relative) return null;
+  const candidate = path.resolve(leafPath, relative);
+  const mediaRoot = path.resolve(leafPath, 'media');
+  return candidate.startsWith(`${mediaRoot}${path.sep}`) && fs.existsSync(candidate) && fs.statSync(candidate).isFile() ? candidate : null;
+}
+
 for (const leaf of leaves) {
   const leafPath = path.join(root, 'notes', ...leaf.parts);
   const manifestPath = path.join(leafPath, 'note.yml');
@@ -102,7 +110,8 @@ for (const leaf of leaves) {
       const ref = $(element).attr('src');
       if (/^(?:[a-z]+:|\/\/|#)/i.test(ref ?? '')) return;
       imageCount++;
-      if (!localFile(leafPath, ref)) failures.push(`${leaf.slug}: missing image reference ${ref}`);
+      const file = localMediaFile(leafPath, ref);
+      if (!file) failures.push(`${leaf.slug}: image reference must resolve to a file under media/: ${ref}`);
     });
     $('a[href]').each((_, element) => {
       const ref = $(element).attr('href');
@@ -137,6 +146,7 @@ for (const leaf of leaves) {
     attachmentCount += countFiles(attachments);
   }
 }
+
 
 if (failures.length) {
   console.error(`Validation failed with ${failures.length} issue(s):\n- ${failures.join('\n- ')}`);

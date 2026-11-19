@@ -80,3 +80,35 @@ y
   assert.equal($('h1,.katex').length, 0);
   assert.match($('code').text(), /x\n=\ny/);
 });
+
+test('rendered prose blocks carry source line ranges for exact inline editing', () => {
+  const html = renderNoteMarkdown('# 标题\n\n第一段 **重点**。\n\n- 列表项\n');
+  assert.match(html, /<h1[^>]*data-source-start="0" data-source-end="1"/);
+  assert.match(html, /<p[^>]*data-source-start="2" data-source-end="3"/);
+  assert.match(html, /<li[^>]*data-source-start="4" data-source-end="5"/);
+});
+
+test('HTML image spacing retains original source lines for paragraphs that follow it', () => {
+  const source = '# 标题\r\n<img src="media/a.png">\r\n## 后续章节\r\n\r\n这段文字可以标注。';
+  const $ = cheerio.load(renderNoteMarkdown(source));
+  assert.equal($('h2').attr('data-source-start'), '2');
+  assert.equal($('p').last().attr('data-source-start'), '4');
+  assert.equal($('p').last().attr('data-source-end'), '5');
+});
+
+test('HTML image examples in code fences remain literal, with source mappings intact', () => {
+  const $ = cheerio.load(renderNoteMarkdown('```html\n<img src="media/a.png">\n```\n\n后面的正文。'));
+  assert.equal($('code').text(), '<img src="media/a.png">\n');
+  assert.equal($('p').attr('data-source-start'), '4');
+});
+
+test('a manual table of contents collapses without deleting source or altering later heading IDs', () => {
+  const source = '## 目录\n\n- [一](#一)\n- [二](#二)\n- [三](#三)\n\n## 一\n\n正文';
+  const $ = cheerio.load(renderNoteMarkdown(source));
+  assert.equal($('details.note-original-toc').length, 1);
+  assert.equal($('details[open]').length, 0);
+  assert.equal($('h2').text(), '一');
+  assert.equal($('h2').attr('data-source-start'), '6');
+  assert.equal($('details a').length, 3);
+  assert.equal(cheerio.load(renderNoteMarkdown('## 目录\n\n这是一段正文。'))('h2').text(), '目录');
+});

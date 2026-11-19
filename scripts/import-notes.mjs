@@ -40,9 +40,8 @@ function markdownReferences(sourceFile, markdown) {
   const html = renderNoteMarkdown(markdown);
   const $ = cheerio.load(html);
   const result = new Set();
-  $('img[src], a[href], source[src]').each((_, element) => {
-    const attr = element.tagName === 'a' ? 'href' : 'src';
-    const resolved = localFile(path.dirname(sourceFile), $(element).attr(attr));
+  $('img[src], source[src]').each((_, element) => {
+    const resolved = localFile(path.dirname(sourceFile), $(element).attr('src'));
     if (resolved) result.add(path.resolve(resolved));
   });
   return result;
@@ -80,7 +79,8 @@ function importMarkdown(leaf, sourceDir, destination) {
     const isReferenced = referenced.has(path.resolve(file));
     const isMedia = imageExtensions.has(path.extname(file).toLowerCase());
     const folder = isMedia && isReferenced ? 'media' : 'attachments';
-    copyFile(file, path.join(destination, folder, relative), `${leaf.sourceDir}/${relative}`);
+    const normalized = relative.replace(/^(?:media|attachments)\//i, '');
+    copyFile(file, path.join(destination, folder, normalized), `${leaf.sourceDir}/${relative}`);
   }
   writeManifest(leaf, destination, 'note.md', `${leaf.sourceDir}/${leaf.sourceFile}`);
 }

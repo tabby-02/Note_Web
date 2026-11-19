@@ -25,3 +25,5 @@ public/scoped-search/
 /supabase/.temp/
 cloudflare/initial-import-inventory.json
 cloudflare/failed-import-objects.json
+
+.supabase-sync-reviews/

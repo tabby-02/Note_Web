@@ -10,7 +10,7 @@ export function mainCandidates(files, type) {
   return visibleUploadFiles(files).filter((file) => /\.(?:md|docx)$/i.test(file.name) && !/^attachments\//i.test(uploadSourcePath(file)))
     .filter((file) => !type || (type === 'markdown' ? /\.md$/i.test(file.name) : type === 'docx' && /\.docx$/i.test(file.name)));
 }
-export function prepareUpload(files, type, mode, mainPath) {
+export function prepareUpload(files, type, mode, mainPath, referencedImages = new Set()) {
   const prepared = [];
   for (const file of visibleUploadFiles(files)) {
     const original = uploadSourcePath(file);
@@ -18,9 +18,13 @@ export function prepareUpload(files, type, mode, mainPath) {
     if (original === mainPath && type !== 'gallery') relative = type === 'markdown' ? 'note.md' : 'note.docx';
     else if (mode === 'main') continue;
     else if (mode === 'attachments') relative = `attachments/${original.replace(/^attachments\//, '')}`;
-    else if (image.test(original) && !original.startsWith('attachments/')) relative = type === 'gallery' ? `chapters/${original.replace(/^chapters\//, '')}` : `media/${original.replace(/^media\//, '')}`;
+    else if (mode === 'main-media' && image.test(original) && !original.startsWith('attachments/')) {
+      if (!referencedImages.has(original)) continue;
+      relative = `media/${original.replace(/^(?:media|attachments)\//, '')}`;
+    }
     else if (mode === 'main-media') continue;
-    else relative = original.startsWith('attachments/') ? original : `attachments/${original}`;
+    else if (image.test(original) && !original.startsWith('attachments/')) relative = type === 'gallery' ? `chapters/${original.replace(/^chapters\//, '')}` : referencedImages.has(original) ? `media/${original.replace(/^(?:media|attachments)\//, '')}` : `attachments/${original.replace(/^attachments\//, '')}`;
+    else relative = original.startsWith('attachments/') ? original : `attachments/${original.replace(/^media\//, '')}`;
     if (relative.split('/').some((part) => !part || part === '.' || part === '..')) throw new Error('文件路径不合法');
     if (prepared.some((entry) => entry.relative === relative)) throw new Error(`目标路径重复：${relative}`);
     if (file.size > (relative === 'note.md' ? 2 : 25) * 1024 * 1024) throw new Error(`文件过大：${original}`);

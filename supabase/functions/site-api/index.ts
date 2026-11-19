@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { markdownPassages } from '../_shared/markdown.mjs';
+import { markdownPassages, validateMarkdownImageAssets } from '../_shared/markdown.mjs';
 import { wordSearchPassages } from '../_shared/word.mjs';
 
 declare const Deno: { env: { get(name: string): string | undefined }; serve(handler: (request: Request) => Response | Promise<Response>): void };
@@ -527,8 +527,19 @@ async function publishUpload(request: Request, noteId: string, operationId: stri
   if (!auth.session) return fail(request, auth.error, auth.status);
   if (!db) return fail(request, 'Content database is unavailable', 503);
   const { data: note } = await db.from('taxonomy_nodes').select('note_type,title').eq('id', noteId).maybeSingle();
-  const { data: staged } = await db.from('note_versions').select('version').eq('id', operationId).eq('note_id', noteId).eq('status', 'staging').maybeSingle();
+  const { data: staged } = await db.from('note_versions').select('version,markdown_object_key').eq('id', operationId).eq('note_id', noteId).eq('status', 'staging').maybeSingle();
   if (!note || !staged) return fail(request, 'Upload operation has expired', 404);
+  if (note.note_type === 'markdown' && staged.markdown_object_key) {
+    const { data: markdownFile, error: markdownError } = await db.storage.from(bucket).download(staged.markdown_object_key);
+    if (markdownError || !markdownFile) return fail(request, 'Could not verify Markdown image references', 503);
+    let markdown: string;
+    try { markdown = new TextDecoder('utf-8', { fatal: true }).decode(new Uint8Array(await markdownFile.arrayBuffer())); }
+    catch { return fail(request, 'Markdown must be valid UTF-8 text'); }
+    const { data: media, error: mediaError } = await db.from('note_assets').select('relative_path').eq('version_id', operationId).eq('role', 'media');
+    if (mediaError) return fail(request, 'Could not verify Markdown image resources', 503);
+    const issues = validateMarkdownImageAssets(markdown, (media ?? []).map((asset: any) => asset.relative_path));
+    if (issues.length) return fail(request, issues[0]);
+  }
   if (note.note_type === 'gallery') {
     const { data: images } = await db.from('note_assets').select('relative_path').eq('version_id', operationId).eq('role', 'gallery-image');
     const folders = new Set((images ?? []).map((asset: any) => {
@@ -561,8 +572,12 @@ async function saveMarkdown(request: Request, noteId: string): Promise<Response>
   const { data: note } = await db.from('taxonomy_nodes').select('id,title,note_type').eq('id', noteId).eq('kind', 'note').is('deleted_at', null).maybeSingle();
   if (!note) return fail(request, 'Note not found', 404);
   if (note.note_type !== 'markdown') return fail(request, 'Only Markdown notes can use this endpoint', 415);
-  const { data: active } = await db.from('note_versions').select('version').eq('note_id', noteId).eq('status', 'published').maybeSingle();
+  const { data: active } = await db.from('note_versions').select('id,version').eq('note_id', noteId).eq('status', 'published').maybeSingle();
   if ((active?.version ?? 0) !== body.expectedVersion) return fail(request, 'This note changed in another session', 409);
+  const { data: media, error: mediaError } = await db.from('note_assets').select('relative_path').eq('version_id', active?.id ?? '').eq('role', 'media');
+  if (mediaError) return fail(request, 'Could not verify Markdown image resources', 503);
+  const imageIssues = validateMarkdownImageAssets(body.content, (media ?? []).map((asset: any) => asset.relative_path));
+  if (imageIssues.length) return fail(request, imageIssues[0]);
   const operationId = crypto.randomUUID();
   const { error: startError } = await db.rpc('start_note_upload', { p_note_id: noteId, p_expected_version: body.expectedVersion, p_mode: 'edit', p_operation_id: operationId, p_files: [] });
   if (startError) return fail(request, 'Could not start a new Markdown version', startError.message.includes('conflict') ? 409 : 503);

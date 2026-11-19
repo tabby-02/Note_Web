@@ -235,7 +235,7 @@ export function planImport(root, options) {
   const mainFile = type === 'gallery' ? '' : options.mainFile || (defaultMain?.type === type ? defaultMain.file : candidates.find((entry) => entry.type === type)?.file);
   assert(type === 'gallery' || candidates.some((entry) => entry.file === mainFile && entry.type === type), '请选择对应类型的主笔记文件');
   const primary = mainFile ? path.join(source, mainFile) : null;
-  const referenced = new Set();
+  const referencedImages = new Set();
   const missing = new Set();
   const externalFiles = new Set();
   const mappings = new Map();
@@ -247,7 +247,8 @@ export function planImport(root, options) {
       externalFiles.add(file);
       relative = `_linked/${crypto.createHash('sha256').update(file).digest('hex').slice(0, 10)}-${path.basename(file)}`;
     }
-    const target = samePath(file, primary || path.join(source, '.unused')) ? 'note.md' : `${isGalleryImage(file) && referenced.has(file) ? 'media' : 'attachments'}/${relative}`;
+    const normalizedRelative = relative.replace(/^(?:media|attachments)\//i, '');
+    const target = samePath(file, primary || path.join(source, '.unused')) ? 'note.md' : `${isGalleryImage(file) && referencedImages.has(file) ? 'media' : 'attachments'}/${normalizedRelative}`;
     mappings.set(file, target);
     return target;
   }
@@ -256,6 +257,23 @@ export function planImport(root, options) {
     const bytes = fs.readFileSync(primary);
     try { markdown = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
     catch { throw new Error('Markdown 不是 UTF-8 编码，请在编辑器中另存为 UTF-8 后导入'); }
+    const rendered = cheerio.load(renderNoteMarkdown(markdown, validationParser), null, false);
+    rendered('img[src], source[src]').each((_, element) => {
+      const raw = rendered(element).attr('src') ?? '';
+      if (!raw || /^(?:[a-z]+:|\/\/|#|data:)/i.test(raw)) return;
+      let local = raw.trim().split(/[?#]/, 1)[0];
+      try { local = decodeURIComponent(local); } catch {}
+      local = local.replaceAll('\\', '/');
+      let resolved;
+      if (/^file:/i.test(local)) {
+        try { resolved = fileURLToPath(local); } catch { return; }
+      } else {
+        const relative = local.replace(/^\/+/, '');
+        resolved = [path.resolve(path.dirname(primary), local), path.resolve(path.dirname(primary), relative), path.resolve(source, relative)]
+          .find((file) => fs.existsSync(file) && fs.statSync(file).isFile());
+      }
+      if (resolved && fs.existsSync(resolved) && fs.statSync(resolved).isFile()) referencedImages.add(fs.realpathSync(resolved));
+    });
     markdown = rewriteReferences(markdown, (raw) => {
       if (!raw || /^(?:#|https?:|data:|mailto:|tel:|\/\/)/i.test(raw)) return raw;
       if (/^[a-z][a-z\d+.-]*:/i.test(raw) && !/^[a-z]:[\\/]/i.test(raw) && !/^file:/i.test(raw)) return raw;
@@ -275,7 +293,6 @@ export function planImport(root, options) {
       if (!resolved || !fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) { missing.add(raw); return raw; }
       resolved = fs.realpathSync(resolved);
       assert(!resolved.split(path.sep).some((segment) => ['.git', '.notes-manager'].includes(segment)), '笔记引用了工具或 Git 内部文件，请移除该引用');
-      referenced.add(resolved);
       return mappedFile(resolved).split('/').map(encodeURIComponent).join('/') + suffix;
     });
   }

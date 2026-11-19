@@ -5,11 +5,14 @@ import { fileURLToPath } from 'node:url';
 import { stringify } from 'yaml';
 import { createClient } from '@supabase/supabase-js';
 import { flattenLeaves, loadTaxonomy } from './taxonomy.mjs';
+import { compareFiles, commonBaseline, noteStatus, compareTaxonomy } from './sync-model.mjs';
+import { renderSyncReport } from './sync-report.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = new Set(process.argv.slice(2));
 const snapshotMode = args.has('--snapshot');
 const jsonMode = args.has('--json');
+const reviewMode = args.has('--review');
 const failOnDrift = args.has('--fail-on-drift');
 const baselinePath = path.join(root, '.supabase-sync-baseline.json');
 
@@ -58,9 +61,9 @@ function localFiles(leaf) {
 }
 
 function taxonomyNodes(nodes, parentId = null, parentPath = []) {
-  return (nodes ?? []).flatMap((node) => {
+  return (nodes ?? []).flatMap((node, position) => {
     const parts = [...parentPath, node.id];
-    const current = [{ id: node.id, parentId, kind: node.type ? 'note' : 'group', type: node.type ?? null, title: node.title, path: parts.join('/') }];
+    const current = [{ id: node.id, parentId, kind: node.type ? 'note' : 'group', type: node.type ?? null, title: node.title, path: parts.join('/'), slug: node.id, position }];
     return [...current, ...taxonomyNodes(node.children, node.id, parts)];
   });
 }
@@ -77,13 +80,6 @@ function cloudPath(id, byId) {
   return parts.join('/');
 }
 
-function sameAssetMap(left, right) {
-  const leftKeys = Object.keys(left ?? {}).sort();
-  const rightKeys = Object.keys(right ?? {}).sort();
-  if (leftKeys.join('\0') !== rightKeys.join('\0')) return false;
-  return leftKeys.every((key) => left[key].sha256 === right[key].sha256 && left[key].size === right[key].size);
-}
-
 function readBaseline() {
   if (!fs.existsSync(baselinePath)) return null;
   try { return JSON.parse(fs.readFileSync(baselinePath, 'utf8')); }
@@ -92,7 +88,7 @@ function readBaseline() {
 
 async function loadCloud() {
   const [{ data: nodes, error: nodeError }, { data: versions, error: versionError }] = await Promise.all([
-    db.from('taxonomy_nodes').select('id,parent_id,title,slug,kind,note_type,deleted_at').order('id'),
+    db.from('taxonomy_nodes').select('id,parent_id,title,slug,kind,note_type,position,deleted_at').order('id'),
     db.from('note_versions').select('id,note_id,version,status,manifest_json,created_at').eq('status', 'published'),
   ]);
   if (nodeError) throw new Error(`taxonomy_nodes: ${nodeError.message}`);
@@ -136,52 +132,45 @@ function cloudAssetMap(assets) {
 function compare(local, cloud, baseline) {
   const entries = [];
   const localById = new Map(local.leaves.map((leaf) => [leaf.id, leaf]));
-  const cloudNotes = cloud.nodes.filter((node) => node.kind === 'note' && !node.deleted_at);
-  for (const leaf of local.leaves) {
-    const cloudNode = cloud.byId.get(leaf.id);
-    const version = cloud.versionByNote.get(leaf.id);
-    const localMap = Object.fromEntries(local.filesByNote.get(leaf.id));
-    const remoteMap = cloudAssetMap(cloud.assetsByNote.get(leaf.id));
-    if (cloudNode?.deleted_at) {
-      entries.push({ id: leaf.id, path: leaf.slug, status: 'cloud-deleted', version: version?.version ?? null, localFiles: Object.keys(localMap).length, cloudFiles: Object.keys(remoteMap).length });
-      continue;
-    }
-    if (!version) {
-      entries.push({ id: leaf.id, path: leaf.slug, status: 'local-only', version: null, localFiles: Object.keys(localMap).length, cloudFiles: 0 });
-      continue;
-    }
-    const localKeys = new Set(Object.keys(localMap));
-    const remoteKeys = new Set(Object.keys(remoteMap));
-    const missingInCloud = [...localKeys].filter((key) => !remoteKeys.has(key));
-    const missingLocally = [...remoteKeys].filter((key) => !localKeys.has(key));
-    const changed = [...localKeys].filter((key) => remoteKeys.has(key) && localMap[key].sha256 !== remoteMap[key].sha256);
-    if (!missingInCloud.length && !missingLocally.length && !changed.length) {
-      entries.push({ id: leaf.id, path: leaf.slug, status: 'clean', version: version.version, localFiles: localKeys.size, cloudFiles: remoteKeys.size });
-      continue;
-    }
-    const base = baseline?.notes?.[leaf.id];
-    const localChanged = base ? !sameAssetMap(localMap, base.assets) : null;
-    const cloudChanged = base ? (version.version !== base.version || !sameAssetMap(remoteMap, base.assets)) : null;
-    const status = base && localChanged && cloudChanged ? 'both-changed'
-      : base && localChanged ? 'local-changed'
-        : base && cloudChanged ? 'cloud-changed' : 'drift';
-    entries.push({ id: leaf.id, path: leaf.slug, status, version: version.version, localFiles: localKeys.size, cloudFiles: remoteKeys.size, missingInCloud, missingLocally, changed });
-  }
-  for (const node of cloudNotes) {
-    if (!localById.has(node.id)) entries.push({ id: node.id, path: cloudPath(node.id, cloud.byId), status: 'cloud-only', version: cloud.versionByNote.get(node.id)?.version ?? null, localFiles: 0, cloudFiles: (cloud.assetsByNote.get(node.id) ?? []).length });
+  const active = cloud.nodes.filter((node) => node.kind === 'note' && !node.deleted_at);
+  const ids = new Set([...localById.keys(), ...active.map((node) => node.id)]);
+  for (const id of ids) {
+    const leaf = localById.get(id), node = cloud.byId.get(id), version = cloud.versionByNote.get(id);
+    const localMap = Object.fromEntries(local.filesByNote.get(id) ?? []);
+    const remoteMap = cloudAssetMap(cloud.assetsByNote.get(id));
+    // Legacy snapshots only captured the cloud; they are not proof of a common ancestor.
+    const base = baseline?.schemaVersion === 2 ? baseline.notes?.[id] : undefined;
+    const files = compareFiles(localMap, remoteMap, base);
+    const status = node?.deleted_at ? 'cloud-deleted' : !leaf ? 'cloud-only' : !version ? 'local-only' : noteStatus(files);
+    entries.push({ id, title: leaf?.title ?? node?.title, path: leaf?.slug ?? cloudPath(id, cloud.byId), status,
+      version: version?.version ?? null, baselineVersion: base?.version ?? null,
+      localFiles: Object.keys(localMap).length, cloudFiles: Object.keys(remoteMap).length,
+      files: files.filter((file) => file.status !== 'equal'),
+      missingInCloud: files.filter((f) => f.difference === 'local-only').map((f) => f.path),
+      missingLocally: files.filter((f) => f.difference === 'cloud-only').map((f) => f.path),
+      changed: files.filter((f) => f.difference === 'modified').map((f) => f.path) });
   }
   return entries;
 }
 
-function baselineFrom(cloud) {
+function baselineFrom(local, cloud, previous) {
   const notes = {};
   for (const [noteId, version] of cloud.versionByNote) {
-    notes[noteId] = { version: version.version, assets: cloudAssetMap(cloud.assetsByNote.get(noteId)) };
+    const localMap = Object.fromEntries(local.filesByNote.get(noteId) ?? []);
+    const old = previous?.schemaVersion === 2 ? previous.notes?.[noteId] : undefined;
+    notes[noteId] = { version: version.version, ...commonBaseline(localMap, cloudAssetMap(cloud.assetsByNote.get(noteId)), old) };
   }
-  return { generatedAt: new Date().toISOString(), notes };
+  return { schemaVersion: 2, generatedAt: new Date().toISOString(), notes };
 }
 
-async function writeSnapshot(cloud) {
+function safeDestination(parent, relative) {
+  if (!relative || relative.includes('\\') || relative.split('/').some((part) => !part || part === '.' || part === '..' || part.includes(':'))) throw new Error('Unsafe snapshot path');
+  const destination = path.resolve(parent, ...relative.split('/'));
+  if (!destination.startsWith(`${path.resolve(parent)}${path.sep}`)) throw new Error('Snapshot path escapes its root');
+  return destination;
+}
+
+async function writeSnapshot(local, cloud, baseline) {
   const stamp = new Date().toISOString().replaceAll(':', '').replaceAll('.', '');
   const target = path.join(root, '.supabase-snapshots', stamp);
   const manifest = { generatedAt: new Date().toISOString(), notes: {} };
@@ -189,7 +178,7 @@ async function writeSnapshot(cloud) {
     const node = cloud.byId.get(noteId);
     if (!node) continue;
     const notePath = cloudPath(noteId, cloud.byId);
-    const noteRoot = path.join(target, 'notes', ...notePath.split('/'));
+    const noteRoot = safeDestination(path.join(target, 'notes'), notePath);
     const assets = cloud.assetsByNote.get(noteId) ?? [];
     fs.mkdirSync(noteRoot, { recursive: true });
     manifest.notes[noteId] = { path: notePath, title: node.title, type: node.note_type, version: version.version, assets: {} };
@@ -197,7 +186,8 @@ async function writeSnapshot(cloud) {
       const { data, error } = await db.storage.from('note-assets').download(asset.object_key);
       if (error) throw new Error(`${noteId}/${asset.relative_path}: ${error.message}`);
       const bytes = new Uint8Array(await data.arrayBuffer());
-      const destination = path.join(noteRoot, ...asset.relative_path.split('/'));
+      if (sha256(bytes) !== asset.sha256 || bytes.length !== Number(asset.size_bytes)) throw new Error(`${noteId}/${asset.relative_path}: snapshot integrity check failed`);
+      const destination = safeDestination(noteRoot, asset.relative_path);
       fs.mkdirSync(path.dirname(destination), { recursive: true });
       fs.writeFileSync(destination, bytes);
       manifest.notes[noteId].assets[asset.relative_path] = { sha256: asset.sha256, size: Number(asset.size_bytes) };
@@ -206,21 +196,22 @@ async function writeSnapshot(cloud) {
   }
   fs.mkdirSync(target, { recursive: true });
   fs.writeFileSync(path.join(target, 'snapshot.json'), JSON.stringify(manifest, null, 2), 'utf8');
-  fs.writeFileSync(baselinePath, JSON.stringify(baselineFrom(cloud), null, 2), 'utf8');
+  fs.writeFileSync(baselinePath, JSON.stringify(baselineFrom(local, cloud, baseline), null, 2), 'utf8');
   return target;
 }
 
 function report(entries, taxonomyIssues) {
-  const result = { entries, taxonomyIssues };
+  const result = { generatedAt: new Date().toISOString(), baselineAt: readBaseline()?.generatedAt ?? null, entries, taxonomyIssues };
   if (jsonMode) console.log(JSON.stringify(result, null, 2));
   else {
     if (taxonomyIssues.length) {
       console.log('TAXONOMY DRIFT');
-      for (const issue of taxonomyIssues) console.log(`  ${issue}`);
+      for (const issue of taxonomyIssues) console.log(`  ${issue.id}: ${issue.field}: ${issue.local ?? "absent"} → ${issue.cloud ?? "absent"}`);
     }
     for (const entry of entries) {
       const suffix = entry.status === 'clean' ? '' : `; missing in cloud=${entry.missingInCloud?.length ?? 0}, missing locally=${entry.missingLocally?.length ?? 0}, changed=${entry.changed?.length ?? 0}`;
       console.log(`${entry.status.padEnd(13)} v${entry.version ?? '-'} ${entry.path}${suffix}`);
+      for (const file of entry.files ?? []) console.log(`  ${file.status.padEnd(13)} ${file.difference.padEnd(10)} ${file.path}`);
     }
     const counts = Object.groupBy(entries, (entry) => entry.status);
     console.log(`Checked ${entries.length} notes: ${Object.entries(counts).map(([status, rows]) => `${status}=${rows.length}`).join(', ') || 'none'}.`);
@@ -232,22 +223,19 @@ const taxonomy = loadTaxonomy(root);
 const local = localState(taxonomy);
 const cloud = await loadCloud();
 const baseline = readBaseline();
-const localNodes = new Map(local.nodes.map((node) => [node.id, node]));
-const taxonomyIssues = [];
-for (const node of local.nodes) {
-  if (!cloud.byId.has(node.id)) taxonomyIssues.push(`${node.id}: exists in Git but not in Supabase`);
-}
-for (const node of cloud.nodes.filter((item) => !item.deleted_at)) {
-  const localNode = localNodes.get(node.id);
-  if (!localNode) {
-    taxonomyIssues.push(`${node.id}: exists in Supabase but not in Git`);
-    continue;
-  }
-  if (localNode.kind !== node.kind || localNode.title !== node.title || localNode.type !== node.note_type) taxonomyIssues.push(`${node.id}: title/type differs between Git and Supabase`);
-}
+const taxonomyIssues = compareTaxonomy(local.nodes, cloud.nodes.filter((node) => !node.deleted_at).map((node) => ({
+  id: node.id, parentId: node.parent_id, title: node.title, type: node.note_type, kind: node.kind, slug: node.slug, position: node.position,
+})));
 const result = report(compare(local, cloud, baseline), taxonomyIssues);
+if (reviewMode) {
+  const reviewRoot = path.join(root, '.supabase-sync-reviews');
+  fs.mkdirSync(reviewRoot, { recursive: true });
+  fs.writeFileSync(path.join(reviewRoot, 'latest.json'), JSON.stringify(result, null, 2), 'utf8');
+  fs.writeFileSync(path.join(reviewRoot, 'latest.html'), renderSyncReport(result), 'utf8');
+  console.log('Read-only review: .supabase-sync-reviews/latest.html (no cloud changes made).');
+}
 if (snapshotMode) {
-  const target = await writeSnapshot(cloud);
+  const target = await writeSnapshot(local, cloud, baseline);
   console.log(`Cloud snapshot written to ${path.relative(root, target)}; baseline updated at ${path.relative(root, baselinePath)}.`);
 }
 if (failOnDrift && (result.taxonomyIssues.length || result.entries.some((entry) => entry.status !== 'clean'))) process.exitCode = 2;

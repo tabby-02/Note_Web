@@ -12,6 +12,10 @@
 
 ## 技术架构与服务
 
+Markdown 优先的体验改进方案与验收记录见 [`MODERNIZATION_PLAN.md`](MODERNIZATION_PLAN.md)。管理页使用按需加载的 CodeMirror 6 源码编辑器，提供行号、Markdown 语法高亮、查找/替换、撤销/重做及 Ctrl/⌘+S 保存。正文仍存为原始 Markdown，不会因切换编辑方式而整篇改写。阅读页浮动标注使用 Floating UI 避让视口、浏览器 Range 与原始源码行映射；包含复杂节点的选区会引导到源码编辑。
+
+管理页保存遇到 HTTP 409 时会打开 CodeMirror Merge 差异窗口：左侧是云端最新 Markdown（只读），右侧是可编辑的草稿。合并完成后点“采用右侧内容，返回检查”，检查预览后再次保存；这一步仅更新草稿和目标版本号，并不会自动发布。取消比较保留原草稿，也可以下载草稿。再次发生并发变更时仍拒绝覆盖。未保存时切换笔记、退出或离开页面会提示确认。
+
 阅读网站使用 Astro 静态生成，Starlight 提供文档站框架，自定义 Astro 组件实现知识目录、章节目录、阅读器、搜索和附件弹窗。交互使用 TypeScript / JavaScript、Web Components 和浏览器原生 API；样式使用 CSS，构建由 Astro 内置的 Vite 完成。
 
 | 服务 / 平台 | 启动方式 / 地址 | 用途与部署范围 |
@@ -53,6 +57,8 @@ Supabase 的主要表为 `taxonomy_nodes`（语义树）、`note_versions`（版
 | `@astrojs/starlight` | 0.42.8 | 文档站布局、全站导航、主题和文档基础能力 |
 | `@astrojs/mdx` | 8.1.2 | 生成的 MDX 页面中引入 Markdown、Word、图库等阅读组件 |
 | `@lucide/astro` | 1.67.0 | 搜索、目录、附件等界面图标 |
+| `@codemirror/*` | 6.x（见锁文件） | 按需加载的 Markdown 源码编辑、查找、撤销和冲突差异比较；不改变正文存储格式 |
+| `@floating-ui/dom` | 1.8.0 | 阅读页选区工具栏定位、翻转和视口避让 |
 | `markdown-it` | 15.0.3 | 主笔记 Markdown 解析，支持 HTML 标签和普通换行 |
 | `markdown-it-anchor` | 10.0.0 | 标题锚点，供文内链接、章节导航和搜索跳转共用 |
 | `markdown-it-emoji` | 3.1.0 | 将 `:yum:` 等表情短码转换为 Unicode 表情 |
@@ -147,6 +153,7 @@ npm run manage
 | `npm run check` | 自动先执行 `precheck` 准备笔记，再运行 `astro check` |
 | `npm run test:manager` | 验证导入、引用重写、分类移动、回收站、失败回滚及本机接口 |
 | `npm run test:search` | 验证搜索索引与正文锚点一致、嵌套内容去重、Word 文本提取 |
+| `npm run test:inline-edit` | 验证 DOM 选区到 Markdown 源字符的精确映射，覆盖重复文本和行内格式 |
 | `npm run test:reading` | 验证长笔记目录定位、重新排版后的定位和滚动时 DOM 更新次数 |
 | `npm run supabase:check` | 检查 Supabase Edge Function 类型和依赖 |
 | `npm run supabase:import:dry` | 校验 23 篇笔记和 932 个资源的导入清单，不修改云端 |
@@ -154,6 +161,7 @@ npm run manage
 | `npm run supabase:sync:check` | 只读比较本地 `notes/` 与 Supabase 活动版本，列出本地独有、云端独有和双方修改 |
 | `npm run supabase:sync:guard` | 同步前保护检查；发现差异时以退出码 2 停止后续命令 |
 | `npm run supabase:sync:snapshot` | 下载当前云端活动版本到被 Git 忽略的 `.supabase-snapshots/`，同时记录版本基线 |
+| `npm run supabase:sync:publish-local` | 预演本地资源清单差异；追加 `-- --publish` 后，仅在分类一致、共享路径哈希一致时按完整文件夹版本发布 |
 | `npm run build` | 依次运行 `prebuild`、Astro 静态构建、`postbuild`，产出并校验 `dist/` |
 | `npm run preview` | 启动构建产物预览，不重新生成笔记或重新构建 |
 
@@ -185,7 +193,7 @@ Windows 上建议先停止开发服务，并等待管理操作完成，再依次
 4. 构建任务使用 Ubuntu 和 Node.js 24，安装锁定依赖、配置 Pages、执行类型检查及 Markdown / 阅读 / 搜索 / 管理工具测试，再设置 `GITHUB_PAGES=true` 执行 `npm run build`，通过 `actions/upload-pages-artifact` 上传 `dist/`。
 5. 部署任务使用 `actions/deploy-pages` 发布产物。当前工作流已声明 `contents: read`、`pages: write`、`id-token: write` 权限，无需额外配置部署令牌。
 
-Actions 同时执行类型检查、四套回归测试、笔记校验和产物校验；全部通过后才发布。
+Actions 同时执行类型检查、七套回归测试、笔记校验和产物校验；全部通过后才发布。
 
 本地复现 Pages 路径下的构建与预览（PowerShell）：
 
@@ -214,6 +222,10 @@ GitHub Actions 只构建和发布应用代码，当前工作流不会执行完�
 npm run supabase:sync:check
 ```
 
+需要逐文件审阅时运行 `npm run supabase:sync:review`。它只读比较活动版本和本地文件，生成被 Git 忽略的 `.supabase-sync-reviews/latest.html` 与 `latest.json`；用浏览器打开 HTML 可以查看笔记版本、文件增删改、同文件冲突、目录父级及排序变化，不会执行上传或删除。同文件双方修改必须人工合并；双方修改了不同文件也会明确列出，不能凭整篇笔记的状态直接覆盖。
+
+基线采用 schemaVersion 2 的共同祖先记录：快照只会将双方一致的文件更新为共同基线，有分歧的文件保留已有共同基线或标为未知。旧版仅记录云端的基线不能证明双方曾经一致，会按 `drift` 处理。下载快照不会把尚未解决的分歧变成可安全覆盖的本地更改。
+
 准备继续修改代码前，先保留完整云端副本并建立三方比较基线：
 
 ```powershell
@@ -230,6 +242,8 @@ npm run supabase:sync:snapshot
 
 推荐的日常顺序是“网页编辑后先快照，再改代码；代码发布前运行同步检查；有冲突先合并，再从管理页发布”。不要把 `supabase:import` 加入 GitHub Actions，也不要用旧的本地文件夹直接覆盖线上活动版本。`npm run supabase:sync:guard` 可放在本地发布脚本中，发现未处理差异时直接阻止构建发布。
 
+当本地只是删除了附件或移动了正文图片、且同路径文件内容未修改时，可先运行 `npm run supabase:sync:publish-local` 查看预演清单；确认笔记和版本范围正确后运行 `npm run supabase:sync:publish-local -- --publish`。该命令会拒绝分类变化、同路径内容修改、缺失云端笔记或图片引用错误；每篇笔记按云端当前版本号 staging 并原子发布，旧版本保留可恢复。存在正文内容修改或复杂冲突时，先人工合并，再通过管理页发布。
+
 ## 维护笔记
 
 线上内容维护使用公开站点的管理页，无需运行本机管理服务器：
@@ -242,7 +256,7 @@ npm run supabase:sync:snapshot
 2. **更新内容**：可只更新主文件、主文件和图片、附件，或整个文件夹重新识别；上传完成后立即切换活动版本。
 3. **整理目录**：新建、重命名、移动分类或笔记；删除为可恢复的回收站操作。
 4. **编辑 Markdown**：源码编辑、预览、公式、文字高亮和预设底色，保存后实时生效。
-5. **阅读页轻量标注**：平时不显示工具条；在 Markdown 正文中选中同一段纯文本后，工具条会紧贴选区上方浮动，空间不足时自动放到下方并避开视口边界。可加粗、斜体、删除线、高亮、预设底色，以及替换、前插、后插或删除文字。首次保存会要求管理员密码，认证失败会在弹窗中显示原因；改动按当前版本号提交，遇到并发修改会拒绝覆盖并提示刷新。公式、图片、链接、代码、表格和跨段选区会引导到管理页，避免破坏原 Markdown 结构。
+5. **阅读页轻量标注**：平时不显示工具条；选中正文后，工具栏锚定浏览器实际选区，选区以独立颜色反馈，空间不足时自动避让视口。可加粗、斜体、删除线、荧光高亮和预设底色；替换、前插、后插或删除放在“更多操作”中。操作后正文立即预览，可继续编辑、保存或撤销。选区按所在 Markdown 块的源行和 DOM 字符偏移精确映射，不通过全文搜索相同文字，因此重复句子不会改到别处。首次保存会要求管理员密码；改动按当前版本号提交，遇到并发修改会拒绝覆盖并提示刷新。公式、链接、代码、图片、表格和跨段选区会引导到管理页。
 6. **恢复版本**：在历史版本中选择旧版本恢复；使用乐观版本号避免覆盖其他标签页的修改。
 
 本机 `npm run manage` 仍可用于离线整理源码目录，但它不参与线上实时发布。线上内容位于 Supabase；建议定期导出数据库和 Storage 对象，并保留 GitHub 仓库作为源文件备份。
@@ -257,11 +271,11 @@ git commit -m "Describe the change"
 git push origin main
 ```
 
-提交前确认 `git status` 没有 `.env*`、service-role key、管理员密码、`.supabase-snapshots/`、`.astro/`、`dist/` 或其他生成文件。若同时修改了网页代码和笔记，应先运行 `npm run supabase:sync:guard`，再按上面的冲突规则处理。推送到仓库默认分支后，GitHub Actions 会自动重新构建并发布 Pages。换电脑维护时，先克隆仓库或拉取最新改动；管理工具本身无需部署，也不会出现在公开网站中。
+提交前确认 `git status` 没有 `.env*`、service-role key、管理员密码、`.supabase-snapshots/`、`.astro/`、`dist/` 或其他生成文件。若同时修改了网页代码和笔记，应先运行 `npm run supabase:sync:guard`，再按上面的冲突规则处理。移动正文图片目录后，必须先在管理页重新上传并发布受影响笔记的完整文件夹，再部署严格解析图片路径的代码；云端资源清单不会因 Git 推送自动更新。推送到仓库默认分支后，GitHub Actions 会自动重新构建并发布 Pages。换电脑维护时，先克隆仓库或拉取最新改动；管理工具本身无需部署，也不会出现在公开网站中。
 
 自动化验证管理工具：`npm run test:manager`。以下为手工维护时的目录约定：
 
-- Markdown：编辑对应主题目录中的 `note.md`。正文引用的图片放在 `media/`，未引用的补充资料放在 `attachments/`。
+- Markdown：编辑对应主题目录中的 `note.md`。通过 `![](...)`、引用式图片、HTML `<img>` 或 `<source>` 嵌入正文的图片必须放在 `media/`；未嵌入正文的补充资料（包括普通超链接到的图片）放在 `attachments/`。网页正文只解析 `media/`，不会从附件目录或叶子根目录兜底；缺图或错误目录会被导入、构建或云端发布校验拦截。文件夹导入和线上“主文件和图片”会按正文嵌入引用分类。
 - 公式：行内推荐 `$z_g$` 或 `\(z_g\)`，块级支持 `$$…$$` 和 `\[…\]`。兼容 Typora 中 `\($z_g$\)`、`\(结果记为$D_g$\)` 这类混写，将外层括号保留为标点、内层公式正常渲染，无需修改原笔记；真正的公式语法错误仍会阻止导入。公式兼容回归检查：`npm run test:markdown`。
 - Word：将主 DOCX 放在主题目录并命名为 `note.docx`；辅助资料放在 `attachments/`。
 - 图片集：每个章节各建一个 `chapters/<章节名>/` 目录，支持嵌套子章节，图片按文件名顺序浏览；`chapters/` 根目录图片归入总览。辅助资料放在 `attachments/`。

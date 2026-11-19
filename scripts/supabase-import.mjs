@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { createClient } from '@supabase/supabase-js';
-import { markdownPassages } from '../supabase/functions/_shared/markdown.mjs';
+import { markdownPassages, validateMarkdownImageAssets } from '../supabase/functions/_shared/markdown.mjs';
 import { wordSearchPassages as extractWordPassages } from '../supabase/functions/_shared/word.mjs';
 import { flattenLeaves, loadTaxonomy } from './taxonomy.mjs';
 
@@ -77,6 +77,11 @@ async function addNode(node, parentId = null, position = 0, parentParts = []) {
   if (source) assets.unshift(source);
   if (docx) assets.unshift(docx);
   if (!assets.length) throw new Error(`No source files found for ${node.slug}`);
+  if (source) {
+    const markdown = fs.readFileSync(source.absolute, 'utf8');
+    const imageIssues = validateMarkdownImageAssets(markdown, assets.filter((asset) => asset.role === 'media').map((asset) => asset.relative));
+    if (imageIssues.length) throw new Error(`${node.slug}: ${imageIssues.join('; ')}`);
+  }
 
   const prepared = assets.map((asset) => {
     const ext = path.extname(asset.relative).toLowerCase();

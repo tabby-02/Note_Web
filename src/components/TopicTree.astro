@@ -1,0 +1,32 @@
+---
+interface TopicNode {
+  id: string;
+  title: string;
+  type?: 'markdown' | 'docx' | 'gallery';
+  children?: TopicNode[];
+}
+interface Props { nodes: TopicNode[]; parents?: string[]; current?: string; base?: string }
+const { nodes, parents = [], current = '', base = '/' } = Astro.props;
+const pathFor = (node: TopicNode) => [...parents, node.id].join('/');
+const hrefFor = (node: TopicNode) => `${base}notes/${pathFor(node)}/`;
+const isOpen = (node: TopicNode) => Boolean(!node.type && (current === pathFor(node) || current.startsWith(`${pathFor(node)}/`)));
+---
+
+<ul class="topic-runtime-list">
+  {nodes.map((node) => {
+    const path = pathFor(node);
+    const hasChildren = !node.type && (node.children?.length ?? 0) > 0;
+    return (
+      <li class="topic-runtime-item">
+        {hasChildren ? (
+          <details open={isOpen(node)} data-topic-branch={path}>
+            <summary>{node.title}</summary>
+            <Astro.self nodes={node.children ?? []} parents={[...parents, node.id]} current={current} base={base} />
+          </details>
+        ) : (
+          <a href={hrefFor(node)} aria-current={current === path ? 'page' : undefined} title={node.title}>{node.title}</a>
+        )}
+      </li>
+    );
+  })}
+</ul>

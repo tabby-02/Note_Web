@@ -71,11 +71,12 @@ export function initNoteOutline(outline: HTMLElement) {
     while (item) {
       const parent = item.parentElement?.closest<HTMLElement>('[data-outline-item]');
       if (parent) {
-        const branch = parent.querySelector<HTMLButtonElement>(':scope > .outline-row > [data-outline-branch]');
+        const branch = parent.querySelector<HTMLAnchorElement>(':scope > .outline-row > [data-outline-branch]');
         const children = parent.querySelector<HTMLElement>(':scope > [data-outline-children]');
         if (branch && children && children.hidden) {
           branch.setAttribute('aria-expanded', 'true');
-          branch.setAttribute('aria-label', `收起${branch.parentElement?.querySelector('a')?.textContent ?? ''}的子目录`);
+          const label = branch.querySelector<HTMLElement>('.outline-label')?.textContent?.trim() ?? branch.textContent?.trim() ?? '';
+          branch.setAttribute('aria-label', `收起${label}的子目录`);
           branch.title = '收起子目录';
           children.hidden = false;
         }

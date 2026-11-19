@@ -1,5 +1,4 @@
 ---
-import { ChevronDown } from '@lucide/astro';
 interface Entry { id: string; text: string; level: number; children: Entry[] }
 interface Props { entries: Entry[]; firstLevel: number; nested?: boolean; collapsed?: boolean }
 const { entries, firstLevel, nested = false, collapsed = false } = Astro.props;
@@ -10,12 +9,10 @@ const { entries, firstLevel, nested = false, collapsed = false } = Astro.props;
     return (
       <li data-outline-item data-level={entry.level} data-depth={entry.level - firstLevel}>
         <div class="outline-row" style={`--outline-depth:${entry.level - firstLevel}`}>
-          {entry.children.length > 0 && (
-            <button type="button" class="outline-branch-toggle" data-outline-branch aria-expanded={openByDefault} aria-label={`${openByDefault ? '收起' : '展开'}${entry.text}的子目录`} title={openByDefault ? '收起子目录' : '展开子目录'}>
-              <ChevronDown size={14} aria-hidden="true" />
-            </button>
-          )}
-          <a href={`#${entry.id}`} title={entry.text}>{entry.text}</a>
+          <a href={`#${entry.id}`} title={entry.text} data-outline-target={entry.id} {...(entry.children.length > 0 ? { 'data-outline-branch': '', 'aria-expanded': openByDefault, 'aria-label': `${openByDefault ? '收起' : '展开'}${entry.text}的子目录` } : {})}>
+            <span class="outline-label">{entry.text}</span>
+            {entry.children.length > 0 && <span class="outline-branch-icon" aria-hidden="true">›</span>}
+          </a>
         </div>
         {entry.children.length > 0 && <Astro.self entries={entry.children} firstLevel={firstLevel} nested collapsed={!openByDefault} />}
       </li>
@@ -24,17 +21,28 @@ const { entries, firstLevel, nested = false, collapsed = false } = Astro.props;
 </ul>
 
 <script>
-  const setExpanded = (button: HTMLButtonElement, expanded: boolean) => {
-    button.setAttribute('aria-expanded', String(expanded));
-    button.setAttribute('aria-label', `${expanded ? '收起' : '展开'}${button.parentElement?.querySelector('a')?.textContent ?? ''}的子目录`);
-    button.title = expanded ? '收起子目录' : '展开子目录';
-    const children = button.closest('li')?.querySelector<HTMLElement>(':scope > [data-outline-children]');
+  const setExpanded = (link: HTMLAnchorElement, expanded: boolean) => {
+    link.setAttribute('aria-expanded', String(expanded));
+    const label = link.querySelector<HTMLElement>('.outline-label')?.textContent?.trim() ?? link.textContent?.trim() ?? '';
+    link.setAttribute('aria-label', `${expanded ? '收起' : '展开'}${label}的子目录`);
+    const children = link.closest('li')?.querySelector<HTMLElement>(':scope > [data-outline-children]');
     if (children) children.hidden = !expanded;
   };
-  document.querySelectorAll<HTMLButtonElement>('[data-outline-branch]').forEach((button) => {
-    button.addEventListener('click', () => {
-      const expanded = button.getAttribute('aria-expanded') !== 'true';
-      setExpanded(button, expanded);
+  const revealTarget = (link: HTMLAnchorElement) => {
+    const rawId = link.dataset.outlineTarget ?? link.getAttribute('href')?.slice(1) ?? '';
+    let id = rawId;
+    try { id = decodeURIComponent(rawId); } catch {}
+    const target = document.getElementById(rawId) ?? document.getElementById(id);
+    if (!target) return;
+    if (link.hash) history.replaceState(null, '', link.hash);
+    requestAnimationFrame(() => target.scrollIntoView({ block: 'start' }));
+  };
+  document.querySelectorAll<HTMLAnchorElement>('[data-outline-branch]').forEach((link) => {
+    link.addEventListener('click', (event) => {
+      event.preventDefault();
+      const expanded = link.getAttribute('aria-expanded') !== 'true';
+      setExpanded(link, expanded);
+      revealTarget(link);
       const allButton = document.querySelector<HTMLButtonElement>('[data-outline-toggle-all]');
       allButton?.setAttribute('aria-pressed', 'false');
       if (allButton) allButton.textContent = '全部展开';
@@ -46,8 +54,8 @@ const { entries, firstLevel, nested = false, collapsed = false } = Astro.props;
   toggleAll?.addEventListener('click', () => {
     if (!tree || !toggleAll) return;
     const expand = toggleAll.getAttribute('aria-pressed') !== 'true';
-    tree.querySelectorAll<HTMLButtonElement>('[data-outline-branch]').forEach((button) => {
-      setExpanded(button, expand);
+    tree.querySelectorAll<HTMLAnchorElement>('[data-outline-branch]').forEach((link) => {
+      setExpanded(link, expand);
     });
     toggleAll.setAttribute('aria-pressed', String(expand));
     toggleAll.textContent = expand ? '收起全部' : '全部展开';
@@ -57,13 +65,12 @@ const { entries, firstLevel, nested = false, collapsed = false } = Astro.props;
 <style>
   ul { padding: 0; margin: 0; list-style: none; }
   li { padding: 0; margin: 0; }
-  .outline-row { display: grid; grid-template-columns: 1.35rem minmax(0, 1fr); align-items: stretch; gap: .12rem; margin: 0; padding-inline-start: calc(var(--outline-depth) * .55rem); }
-  .outline-branch-toggle { display: grid; width: 1.35rem; height: 2rem; place-items: center; margin: .1rem 0 0; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--sl-color-gray-3); cursor: pointer; }
-  .outline-branch-toggle:hover { background: var(--sl-color-gray-6); color: var(--sl-color-accent-high); }
-  .outline-branch-toggle svg { transition: transform .16s ease; }
-  .outline-branch-toggle[aria-expanded='false'] svg { transform: rotate(-90deg); }
-  .outline-row > a { grid-column: 2; display: block; min-width: 0; padding: .35rem .45rem; border-inline-start: 2px solid transparent; border-radius: 0 5px 5px 0; color: var(--sl-color-gray-3); font-size: .75rem; line-height: 1.55; overflow-wrap: anywhere; text-decoration: none; }
+  .outline-row { margin: 0; padding-inline-start: calc(var(--outline-depth) * .55rem); }
+  .outline-row > a { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: .45rem; padding: .38rem .5rem; border-inline-start: 2px solid transparent; border-radius: 0 5px 5px 0; color: var(--sl-color-gray-3); font-size: .75rem; line-height: 1.5; overflow-wrap: anywhere; text-decoration: none; }
   .outline-row > a:hover { color: var(--sl-color-accent-high); background: var(--sl-color-gray-6); }
+  .outline-label { min-width: 0; }
+  .outline-branch-icon { flex: 0 0 auto; color: var(--sl-color-gray-3); font-size: 1rem; line-height: 1; transition: transform .16s ease; }
+  a[data-outline-branch][aria-expanded='true'] .outline-branch-icon { transform: rotate(90deg); color: var(--sl-color-accent-high); }
   [data-outline-item][data-depth='0'] > .outline-row > a { color: var(--sl-color-gray-2); font-size: .8rem; font-weight: 650; }
   .outline-row > a[aria-current='location'] { border-color: var(--sl-color-accent); background: var(--sl-color-accent-low); color: var(--sl-color-accent-high); }
 </style>

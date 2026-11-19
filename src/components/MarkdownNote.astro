@@ -122,6 +122,15 @@ for (const heading of toc) {
     try { value = decodeURIComponent(value); } catch {}
     return value.replaceAll('\\', '/').replace(/^\/+/, '').replace(/^\.\//, '');
   };
+  const revealOutlineTarget = (link: HTMLAnchorElement) => {
+    const rawId = link.dataset.outlineTarget ?? link.getAttribute('href')?.slice(1) ?? '';
+    let id = rawId;
+    try { id = decodeURIComponent(rawId); } catch {}
+    const target = document.getElementById(rawId) ?? document.getElementById(id);
+    if (!target) return;
+    if (link.hash) history.replaceState(null, '', link.hash);
+    requestAnimationFrame(() => target.scrollIntoView({ block: 'start' }));
+  };
 
   const renderLiveNote = async (layout: HTMLElement, note: any) => {
     const article = layout.querySelector<HTMLElement>('.note-prose');
@@ -159,15 +168,16 @@ for (const heading of toc) {
         for (const entry of entries) {
           const item = document.createElement('li'); item.dataset.outlineItem = ''; item.dataset.level = String(entry.level); item.dataset.depth = String(entry.level - firstLevel);
           const row = document.createElement('div'); row.className = 'outline-row'; row.style.setProperty('--outline-depth', String(entry.level - firstLevel));
-          if (entry.children.length) { const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'outline-branch-toggle'; toggle.dataset.outlineBranch = ''; toggle.setAttribute('aria-expanded', String(entry.level === firstLevel)); toggle.setAttribute('aria-label', `${entry.level === firstLevel ? '收起' : '展开'}${entry.text}的子目录`); toggle.title = entry.level === firstLevel ? '收起子目录' : '展开子目录'; const icon = document.createElement('span'); icon.className = 'outline-branch-icon'; icon.setAttribute('aria-hidden', 'true'); icon.textContent = '⌄'; toggle.append(icon); row.append(toggle); }
-          const link = document.createElement('a'); link.href = `#${entry.id}`; link.title = entry.text; link.textContent = entry.text; row.append(link); item.append(row);
+          const link = document.createElement('a'); link.href = `#${entry.id}`; link.title = entry.text; link.dataset.outlineTarget = entry.id; link.textContent = entry.text;
+          if (entry.children.length) { link.dataset.outlineBranch = ''; link.setAttribute('aria-expanded', String(entry.level === firstLevel)); link.setAttribute('aria-label', `${entry.level === firstLevel ? '收起' : '展开'}${entry.text}的子目录`); const label = document.createElement('span'); label.className = 'outline-label'; label.textContent = entry.text; const icon = document.createElement('span'); icon.className = 'outline-branch-icon'; icon.setAttribute('aria-hidden', 'true'); icon.textContent = '›'; link.replaceChildren(label, icon); }
+          row.append(link); item.append(row);
           if (entry.children.length) { const children = build(entry.children as typeof headings, true); children.hidden = entry.level !== firstLevel; item.append(children); }
           list.append(item);
         }
         return list;
       };
       outline.replaceChildren(build(roots));
-      if (!outline.dataset.bound) { outline.dataset.bound = 'true'; outline.addEventListener('click', (event) => { const button = (event.target as Element).closest<HTMLButtonElement>('[data-outline-branch]'); if (!button) return; const expanded = button.getAttribute('aria-expanded') !== 'true'; button.setAttribute('aria-expanded', String(expanded)); const children = button.closest('li')?.querySelector<HTMLElement>(':scope > [data-outline-children]'); if (children) children.hidden = !expanded; }); }
+      if (!outline.dataset.bound) { outline.dataset.bound = 'true'; outline.addEventListener('click', (event) => { const link = (event.target as Element).closest<HTMLAnchorElement>('[data-outline-branch]'); if (!link) return; event.preventDefault(); const expanded = link.getAttribute('aria-expanded') !== 'true'; link.setAttribute('aria-expanded', String(expanded)); const children = link.closest('li')?.querySelector<HTMLElement>(':scope > [data-outline-children]'); if (children) children.hidden = !expanded; revealOutlineTarget(link); }); }
       document.dispatchEvent(new CustomEvent('notes:dynamic-content', { detail: { outline: true } }));
     }
     if (location.hash) { let id = location.hash.slice(1); try { id = decodeURIComponent(id); } catch {} requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ block: 'start' })); }

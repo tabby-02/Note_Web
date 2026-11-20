@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { markdownPassages, validateMarkdownImageAssets } from '../_shared/markdown.mjs';
+import { inspectMarkdown, markdownPassages, validateMarkdownImageAssets } from '../_shared/markdown.mjs';
 import { wordSearchPassages } from '../_shared/word.mjs';
 
 declare const Deno: { env: { get(name: string): string | undefined }; serve(handler: (request: Request) => Response | Promise<Response>): void };
@@ -576,8 +576,8 @@ async function saveMarkdown(request: Request, noteId: string): Promise<Response>
   if ((active?.version ?? 0) !== body.expectedVersion) return fail(request, 'This note changed in another session', 409);
   const { data: media, error: mediaError } = await db.from('note_assets').select('relative_path').eq('version_id', active?.id ?? '').eq('role', 'media');
   if (mediaError) return fail(request, 'Could not verify Markdown image resources', 503);
-  const imageIssues = validateMarkdownImageAssets(body.content, (media ?? []).map((asset: any) => asset.relative_path));
-  if (imageIssues.length) return fail(request, imageIssues[0]);
+  const inspection = inspectMarkdown(body.content, (media ?? []).map((asset: any) => asset.relative_path));
+  if (inspection.issues.length) return fail(request, inspection.issues[0]);
   const operationId = crypto.randomUUID();
   const { error: startError } = await db.rpc('start_note_upload', { p_note_id: noteId, p_expected_version: body.expectedVersion, p_mode: 'edit', p_operation_id: operationId, p_files: [] });
   if (startError) return fail(request, 'Could not start a new Markdown version', startError.message.includes('conflict') ? 409 : 503);
@@ -602,7 +602,7 @@ async function saveMarkdown(request: Request, noteId: string): Promise<Response>
     const { error: updateError } = await db.from('note_versions').update({ markdown_object_key: objectKey }).eq('id', operationId);
     if (updateError) throw updateError;
     await db.from('search_passages').delete().eq('version_id', operationId).neq('scope', 'topic');
-    const passages = markdownPassages(body.content).map((passage) => ({ note_id: noteId, version_id: operationId, ...passage }));
+    const passages = inspection.passages.map((passage) => ({ note_id: noteId, version_id: operationId, ...passage }));
     const { error: passageError } = await insertPassages(passages);
     if (passageError) throw passageError;
     const { data: version, error: publishError } = await db.rpc('publish_note_version', { p_note_id: noteId, p_operation_id: operationId });

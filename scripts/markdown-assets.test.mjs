@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateMarkdownImageAssets } from '../supabase/functions/_shared/markdown.mjs';
+import { inspectMarkdown, validateMarkdownImageAssets } from '../supabase/functions/_shared/markdown.mjs';
 
 test('validates embedded Markdown, HTML, and reference-style images only', () => {
   const markdown = [
@@ -20,4 +20,16 @@ test('rejects missing media and explicit references into attachments', () => {
   assert.equal(issues.length, 2);
   assert.match(issues[0], /missing from media/);
   assert.match(issues[1], /inside media/);
+});
+
+test('inspects image references and search passages in one rendered document', () => {
+  const result = inspectMarkdown('# JDBC\n\nA paragraph with $x^2$ and an image ![diagram](jdbc.png).', ['media/jdbc.png']);
+  assert.deepEqual(result.issues, []);
+  assert.ok(result.passages.some((passage) => passage.scope === 'outline' && passage.content === 'JDBC'));
+  assert.ok(result.passages.some((passage) => passage.scope === 'body' && passage.content.includes('A paragraph with')));
+
+  const invalid = inspectMarkdown('A missing image: ![missing](absent.png)', []);
+  assert.equal(invalid.issues.length, 1);
+  assert.match(invalid.issues[0], /missing from media/);
+  assert.ok(invalid.passages.some((passage) => passage.scope === 'body'));
 });
